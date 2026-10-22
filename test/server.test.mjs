@@ -50,7 +50,8 @@ test('groups route only mentions and replies to the bot while direct chats route
   await f.context.settings.set('mappings', []); await service.processMessage({ update_id: 1, message: { ...base, message_id: 1, text: 'hello' } }, bot); let state = await service.publicState();
   await service.approve(state.pending[0].id, { agentId: 'hatchet' });
   await service.processMessage({ update_id: 2, message: { ...base, message_id: 2, text: 'not for bot' } }, bot); assert.equal(f.submissions.length, 0);
-  await service.processMessage({ update_id: 3, message: { ...base, message_id: 3, text: '@switchboard_bot please answer' } }, bot); assert.equal(f.submissions.length, 1); assert.match(f.submissions[0].message, /please answer/); assert.doesNotMatch(f.submissions[0].message, /@switchboard_bot/);
+  await service.processMessage({ update_id: 3, message: { ...base, message_id: 3, text: '@switchboard_bot please answer', entities: [{ type: 'mention', offset: 0, length: 16 }] } }, bot); assert.equal(f.submissions.length, 1); assert.match(f.submissions[0].message, /please answer/); assert.doesNotMatch(f.submissions[0].message, /@switchboard_bot/);
+  await service.processMessage({ update_id: 31, message: { ...base, message_id: 31, text: 'ordinary @switchboard_bot.fake', entities: [{ type: 'mention', offset: 9, length: 21 }] } }, bot); assert.equal(f.submissions.length, 1);
   await service.processMessage({ update_id: 4, message: { ...base, message_id: 4, text: 'replying', reply_to_message: { from: { id: 9 } } } }, bot); assert.equal(f.submissions.length, 2); await service.close();
 });
 
@@ -62,6 +63,26 @@ test('successful agent turn is delivered later and an ambiguous Telegram send is
   await service.reconcile(api); assert.equal(f.sent.length, 1); let state = await service.publicState(); assert.equal(state.deliveries.find(item => item.id === 'out:turn-1').status, 'delivered'); assert.equal(state.deliveries.find(item => item.id === 'in:5').status, 'delivered');
   await service.reconcile(api); assert.equal(f.sent.length, 1);
   await f.context.settings.set('deliveries', [{ id: 'out:turn-2', direction: 'outbound', turnId: 'turn-2', status: 'sending' }]); await service.reconcile(api); state = await service.publicState(); assert.equal(state.deliveries[0].status, 'unknown'); await service.close();
+});
+
+test('late long-poll results cannot dispatch or restore stale bot state after token clear', async () => {
+  let releaseUpdates; let pollEntered;
+  const updates = new Promise(resolve => { releaseUpdates = resolve; });
+  const entered = new Promise(resolve => { pollEntered = resolve; });
+  const fetchImpl = async url => {
+    if (url.endsWith('/getMe')) return { ok: true, status: 200, json: async () => ({ ok: true, result: { id: 9, username: 'old_bot', first_name: 'Old' } }) };
+    if (url.endsWith('/getUpdates')) { pollEntered(); return { ok: true, status: 200, json: async () => ({ ok: true, result: await updates }) }; }
+    throw new Error('unexpected_request');
+  };
+  const f = fixture({ fetchImpl });
+  await f.context.settings.set('configuration', { enabled: true }); await f.context.secrets.set('telegram-bot-token', 'old-token');
+  const service = createSwitchboardService({ context: f.context, fetchImpl, idleDelayMs: 1, retryDelayMs: 1 });
+  service.start();
+  await entered;
+  await service.clearToken();
+  releaseUpdates([{ update_id: 1, message: { message_id: 1, chat: { id: 42, type: 'private' }, from: { id: 1, first_name: 'Rob' }, text: 'late' } }]);
+  await settle(); await settle();
+  const cleared = await service.publicState(); assert.equal(f.submissions.length, 0); assert.equal(cleared.bot.username, undefined); assert.equal(cleared.transport.polling, 'stopped'); await service.close();
 });
 
 test('Telegram API uses POST body and never places token in returned errors', async () => {

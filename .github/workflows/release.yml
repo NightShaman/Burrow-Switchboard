@@ -14,12 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { ref: main, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with:
+          repository: NightShaman/Burrow-Backend
+          ref: main
+          token: ${{ secrets.BURROW_SOURCE_TOKEN }}
+          path: core
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - name: Standalone contract gate
+      - name: Standalone and current-Core contract gate
         run: |
           npm run build
           node --test test/server.test.mjs test/ui.test.mjs
+          (cd core && npm ci --no-audit --no-fund)
+          BURROW_CORE_ROOT="$GITHUB_WORKSPACE/core" npm run test:core
       - name: Assign calendar version
         id: version
         run: |

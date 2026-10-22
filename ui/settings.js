@@ -28,7 +28,7 @@ function normalize(value) {
   return { enabled: value?.enabled === true || transport.enabled === true, tokenConfigured: value?.tokenConfigured === true || value?.bot?.configured === true, bot: value?.bot || value?.botIdentity || {}, transport, core: { available: core.available === true, reason: core.reason }, mappings: Array.isArray(value?.mappings) ? value.mappings : [], pending: Array.isArray(value?.pending) ? value.pending : Array.isArray(value?.pendingAdmissions) ? value.pendingAdmissions : [] };
 }
 function agentOptions(agents, selected = '') {
-  return [{ id: '', name: 'Select an agent' }, ...agents.map(agent => ({ id: String(agent.id), name: String(agent.name || agent.id) }))].map(agent => { const option = el('option', { value: agent.id, text: agent.name }); option.selected = agent.id === selected; return option; });
+  return [{ id: '', name: 'Select an agent' }, ...agents.filter(agent => agent.enabled !== false).map(agent => ({ id: String(agent.id), name: String(agent.name || agent.id) }))].map(agent => { const option = el('option', { value: agent.id, text: agent.name }); option.selected = agent.id === selected; return option; });
 }
 function request(api, controller, path, init = {}) { return api(path, { ...init, signal: controller.signal, headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.headers || {}) } }); }
 

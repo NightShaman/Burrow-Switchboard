@@ -52,7 +52,8 @@ test('Configuration preserves blank tokens and clears only through explicit rout
 
 test('Pending admissions approve with agent and deny by explicit routes', async () => {
   const root = new FakeNode('div'); const calls = [];
-  const cleanup = mountSettings({ section: 'pending-admissions', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [{ id: 'hatchet', name: 'Hatchet' }], api: async (path, init = {}) => { calls.push({ path, init }); return config(); } }); await settle();
+  const cleanup = mountSettings({ section: 'pending-admissions', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [{ id: 'hatchet', name: 'Hatchet', enabled: true }, { id: 'sleepy', name: 'Sleepy', enabled: false }], api: async (path, init = {}) => { calls.push({ path, init }); return config(); } }); await settle();
+  assert.equal(byTag(root, 'option').some(option => option.value === 'sleepy'), false);
   const select = byTag(root, 'select')[0]; select.value = 'hatchet'; await byText(root, 'button', 'Approve').dispatchEvent({ type: 'click' }); await settle();
   assert.deepEqual(JSON.parse(calls.find(call => call.path === '/pending/pending-1/approve').init.body), { agentId: 'hatchet' });
   await byText(root, 'button', 'Deny').dispatchEvent({ type: 'click' }); await settle(); assert.ok(calls.some(call => call.path === '/pending/pending-1/deny'));
