@@ -1,3 +1,5 @@
+![Burrow Switchboard](docs/assets/hero.png)
+
 # Burrow Switchboard
 
 **Telegram in. Goblins out.**
