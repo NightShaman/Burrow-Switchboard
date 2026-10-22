@@ -1,14 +1,25 @@
 {
   "id": "burrow-switchboard",
-  "name": "Burrow Switchboard",
+  "name": "Switchboard",
   "version": "2026.10.22",
   "server": "server/index.mjs",
   "ui": {
-    "control": "ui/control.js",
     "settings": "ui/settings.js"
   },
   "contributions": {
     "settings": [
+      {
+        "id": "status",
+        "navigation": {
+          "title": "Switchboard",
+          "description": "Monitor Telegram transport health, routing, and recent delivery state."
+        },
+        "primary": {
+          "title": "Status",
+          "description": "Review Telegram, Core availability, admissions, mappings, and bounded delivery diagnostics.",
+          "capability": "settingsUi"
+        }
+      },
       {
         "id": "configuration",
         "navigation": {

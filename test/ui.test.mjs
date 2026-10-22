@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mountControl } from '../ui/control.js';
 import { mountSettings, settingsSections } from '../ui/settings.js';
 
 class FakeNode {
@@ -28,16 +27,15 @@ const config = () => ({ enabled: true, tokenConfigured: true, bot: { configured:
 test.beforeEach(() => { globalThis.document = documentFixture; globalThis.confirm = () => true; });
 test.afterEach(() => { delete globalThis.document; delete globalThis.confirm; });
 
-test('Control loads bootstrap status, refreshes, and cleans up', async () => {
+test('Settings status carries transport, routing, admissions, and delivery diagnostics', async () => {
   const root = new FakeNode('div'); const calls = [];
-  const cleanup = mountControl({ root, api: async (path, init) => { calls.push({ path, init }); return { ...config(), deliveries: [{ id: 'd1', direction: 'inbound', chatTitle: 'Rob', agentName: 'Hatchet', status: 'delivered', at: '2026-10-22T15:01:00Z' }] }; } });
-  await settle(); assert.equal(calls[0].path, '/bootstrap'); assert.match(root.textContent, /@switchboard_bot/); assert.match(root.textContent, /Goblin Council/); assert.match(root.textContent, /Pending admissions/); assert.match(root.textContent, /Recent deliveries/);
-  await byText(root, 'button', 'Refresh').dispatchEvent({ type: 'click' }); assert.equal(calls.length, 2);
+  const cleanup = mountSettings({ section: 'status', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [], api: async (path, init) => { calls.push({ path, init }); return { ...config(), deliveries: [{ id: 'd1', direction: 'inbound', chatTitle: 'Rob', agentName: 'Hatchet', status: 'delivered', at: '2026-10-22T15:01:00Z' }] }; } });
+  await settle(); assert.equal(calls[0].path, '/configuration'); assert.match(root.textContent, /@switchboard_bot/); assert.match(root.textContent, /Goblin Council/); assert.match(root.textContent, /Pending admissions/); assert.match(root.textContent, /Recent deliveries/); assert.match(root.textContent, /delivered/);
   const signal = calls[0].init.signal; cleanup(); assert.equal(signal.aborted, true); assert.equal(root.children.length, 0);
 });
 
 test('Configuration preserves blank tokens and clears only through explicit route', async () => {
-  assert.deepEqual(settingsSections.map(item => item.id), ['configuration', 'pending-admissions', 'chat-mappings']);
+  assert.deepEqual(settingsSections.map(item => item.id), ['status', 'configuration', 'pending-admissions', 'chat-mappings']);
   const root = new FakeNode('div'); const calls = [];
   const api = async (path, init = {}) => { calls.push({ path, init }); return config(); };
   const cleanup = mountSettings({ section: 'configuration', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [], api }); await settle();
