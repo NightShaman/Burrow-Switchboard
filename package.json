@@ -1,0 +1,14 @@
+{
+  "name": "burrow-switchboard",
+  "version": "2026.10.22",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --check server/index.mjs && node --check server/telegram.mjs && node --check ui/control.js && node --check ui/settings.js",
+    "test": "node --test test/*.test.mjs",
+    "test:core": "node --test test/core-contract.test.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

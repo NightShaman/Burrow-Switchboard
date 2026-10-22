@@ -1,0 +1,50 @@
+{
+  "id": "burrow-switchboard",
+  "name": "Burrow Switchboard",
+  "version": "2026.10.22",
+  "server": "server/index.mjs",
+  "ui": {
+    "control": "ui/control.js",
+    "settings": "ui/settings.js"
+  },
+  "contributions": {
+    "settings": [
+      {
+        "id": "configuration",
+        "navigation": {
+          "title": "Switchboard",
+          "description": "Connect external chat transports to selected Burrow agents."
+        },
+        "primary": {
+          "title": "Configuration",
+          "description": "Configure the Telegram bot and transport lifecycle.",
+          "capability": "settingsUi"
+        }
+      },
+      {
+        "id": "pending-admissions",
+        "navigation": {
+          "title": "Pending admissions",
+          "description": "Approve Telegram chats before they can reach a Burrow agent."
+        },
+        "primary": {
+          "title": "Pending admissions",
+          "description": "Review chat identity and choose the enabled Burrow agent that should receive it.",
+          "capability": "settingsUi"
+        }
+      },
+      {
+        "id": "chat-mappings",
+        "navigation": {
+          "title": "Chat mappings",
+          "description": "Manage approved Telegram chat-to-agent routing."
+        },
+        "primary": {
+          "title": "Chat mappings",
+          "description": "Change the destination agent or disable a mapping without deleting its history.",
+          "capability": "settingsUi"
+        }
+      }
+    ]
+  }
+}
