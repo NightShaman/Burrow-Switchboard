@@ -39,3 +39,7 @@ npm test
 ```
 
 Switchboard is distributed under the [Burrow Sustainable Use License](LICENSE).
+
+## Documentation
+
+Start with the [Switchboard guide](docs/index.md) for operator setup, admission and routing, Settings, delivery troubleshooting, architecture, the mod-local API and development checks. These pages describe the current Telegram-only implementation and distinguish future capabilities.
