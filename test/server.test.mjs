@@ -345,3 +345,119 @@ test('legacy and connection mapping DELETE routes enforce authentication and ret
   }
   assert.equal((await f.routes.get('DELETE /connections/:connectionId/mappings/:id')(request(null, { connectionId: 'missing', id: mapping.id }))).status, 404);
 });
+
+const roomMessage = (messageId, text, extra = {}) => ({ update_id: messageId, message: { message_id: messageId, date: 1792752000 + messageId, chat: { id: -700, type: 'supergroup', title: 'Shared Council' }, from: { id: 5, first_name: 'King' }, text, ...extra } });
+const contextData = prompt => JSON.parse(prompt.split('\n')[1]);
+async function admitRoom(service, connectionId, bot, extra = {}) {
+  await service.processMessage(roomMessage(1, 'admit', extra), bot, connectionId);
+  const state = (await service.publicState()).connections.find(c => c.id === connectionId);
+  const pending = state.pending.find(p => p.chatId === String(extra.chat?.id || -700) && p.topicId === (extra.message_thread_id ?? null));
+  await service.approveConnection(connectionId, pending.id, { agentId: 'hatchet' });
+}
+
+test('two managed bots share room speech and confirmed replies across restart without waking each other', async () => {
+  const f = multiFixture();
+  f.context.agents.turns.submit = async input => { f.submissions.push(input); return { turn: { id: `room-turn-${f.submissions.length}`, status: 'queued' } }; };
+  f.context.agents.turns.read = async id => ({ id, status: 'succeeded', result: { answerText: 'Magenta engineering opinion' } });
+  let service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const other = (await service.createConnection({ name: 'Other', token: 'two-token', enabled: false })).connections[1].id;
+  const bots = [{ id: '1', username: 'bot_1' }, { id: '2', username: 'bot_2' }];
+  for (const [index, id] of ['default', other].entries()) await admitRoom(service, id, bots[index]);
+  // Same human message arrives via two independent pollers: one context entry.
+  for (const [index, id] of ['default', other].entries()) await service.processMessage(roomMessage(2, 'The relay should be teal'), bots[index], id);
+  assert.equal(f.submissions.length, 0);
+  const addressed = roomMessage(3, '@bot_2 thoughts?', { entities: [{ type: 'mention', offset: 0, length: 6 }] });
+  await service.processMessage(addressed, bots[1], other);
+  assert.equal(f.submissions.length, 1);
+  assert.deepEqual(contextData(f.submissions[0].message).roomHistory.map(m => m.text), ['The relay should be teal']);
+  await service.reconcile({ sendMessage: async () => ({ message_id: 4, date: 1792752004 }) }, other);
+  assert.equal(f.submissions.length, 1, 'posting a reply never wakes the peer');
+  await service.close();
+  service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  await service.processMessage(roomMessage(5, '@bot_1 do you agree?', { entities: [{ type: 'mention', offset: 0, length: 6 }] }), bots[0]);
+  const history = contextData(f.submissions[1].message).roomHistory;
+  assert.deepEqual(history.map(m => m.messageId), [2, 3, 4]);
+  assert.equal(history[2].text, 'Magenta engineering opinion');
+  assert.equal(history[2].speaker.connectionId, other);
+  assert.equal(history[2].speaker.kind, 'bot');
+  assert.equal(f.submissions[1].sessionId, 'telegram:-700:root');
+  assert.notEqual(f.submissions[0].sessionId, f.submissions[1].sessionId);
+  await service.processMessage(roomMessage(6, '@bot_1 loop', { from: { id: 2, is_bot: true }, entities: [{ type: 'mention', offset: 0, length: 6 }] }), bots[0]);
+  assert.equal(f.submissions.length, 2);
+  assert.equal(f.settings.get('telegram-room-history')[0].messages.some(m => m.messageId === 6), false);
+  await service.close();
+});
+
+test('room context respects chat/topic, private, admission and disabled-route boundaries', async () => {
+  const f = multiFixture(); const service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const bot = { id: '1', username: 'bot_1' };
+  await service.processMessage(roomMessage(1, 'unapproved secret'), bot);
+  assert.equal(f.settings.has('telegram-room-history'), false);
+  await admitRoom(service, 'default', bot);
+  await service.processMessage(roomMessage(2, 'root-only'), bot);
+  await admitRoom(service, 'default', bot, { message_thread_id: 11 });
+  await service.processMessage(roomMessage(3, 'topic-only', { message_thread_id: 11 }), bot);
+  await admitRoom(service, 'default', bot, { chat: { id: -701, type: 'supergroup', title: 'Other' } });
+  await service.processMessage(roomMessage(4, 'other-room', { chat: { id: -701, type: 'supergroup' } }), bot);
+  await admitRoom(service, 'default', bot, { chat: { id: 55, type: 'private' } });
+  await service.processMessage(roomMessage(5, 'DM-secret', { chat: { id: 55, type: 'private' } }), bot);
+  const mapping = (await service.publicState()).mappings.find(m => m.chatId === '-700' && m.topicId === null);
+  await service.updateMapping(mapping.id, { agentId: 'hatchet', enabled: false });
+  await service.processMessage(roomMessage(6, 'disabled secret'), bot);
+  await service.updateMapping(mapping.id, { agentId: 'hatchet', enabled: true });
+  await service.processMessage(roomMessage(7, '@bot_1 root question', { entities: [{ type: 'mention', offset: 0, length: 6 }] }), bot);
+  const prompt = f.submissions.at(-1).message;
+  assert.deepEqual(contextData(prompt).roomHistory.map(m => m.text), ['root-only']);
+  assert.doesNotMatch(prompt, /topic-only|other-room|DM-secret|disabled secret|unapproved secret/);
+  assert.doesNotMatch(JSON.stringify(f.settings.get('telegram-room-history')), /DM-secret|disabled secret|unapproved secret/);
+  await service.close();
+});
+
+test('reply context includes original speaker, full text and selected quote for groups and DMs', async () => {
+  const f = multiFixture(); const service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const bot = { id: '1', username: 'bot_1' };
+  for (const chat of [{ id: -700, type: 'supergroup' }, { id: 55, type: 'private' }]) {
+    await admitRoom(service, 'default', bot, { chat });
+    await service.processMessage(roomMessage(9, 'explain that', { chat, reply_to_message: { message_id: 8, from: { id: 1, is_bot: true, first_name: 'Hatchet', username: 'bot_1' }, text: 'The entire original argument' }, quote: { text: 'original' } }), bot);
+    const reply = contextData(f.submissions.at(-1).message).replyTo;
+    assert.equal(reply.text, 'The entire original argument');
+    assert.equal(reply.speaker.name, 'Hatchet'); assert.equal(reply.speaker.kind, 'bot');
+    assert.equal(reply.quotedExcerpt, 'original');
+  }
+  await service.close();
+});
+
+test('failed and partial outbound delivery shares only Telegram-confirmed chunks', async () => {
+  const f = multiFixture(); const service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const bot = { id: '1', username: 'bot_1' };
+  await admitRoom(service, 'default', bot);
+  await service.processMessage(roomMessage(2, '@bot_1 answer', { entities: [{ type: 'mention', offset: 0, length: 6 }] }), bot);
+  f.context.agents.turns.read = async id => ({ id, status: 'succeeded', result: { answerText: 'a'.repeat(4000) + 'unconfirmed tail' } });
+  let sends = 0;
+  const api = { sendMessage: async () => { if (++sends === 2) throw new Error('uncertain'); return { message_id: 3 }; } };
+  await service.reconcile(api);
+  const history = f.settings.get('telegram-room-history')[0].messages;
+  assert.equal(history.filter(m => m.speaker.kind === 'bot').length, 1);
+  assert.equal(history.at(-1).text, 'a'.repeat(4000));
+  assert.doesNotMatch(JSON.stringify(history), /unconfirmed tail/);
+  await service.reconcile(api); assert.equal(sends, 2, 'unknown send is not repeated');
+  await service.close();
+});
+
+test('uncertain Core submission replays byte-identical context after history changes and restart', async () => {
+  const f = multiFixture(); let failed = false;
+  f.context.agents.turns.submit = async input => { f.submissions.push(input); if (!failed) { failed = true; throw new Error('response_lost'); } return { turn: { id: 'replayed', status: 'queued' } }; };
+  let service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const bot = { id: '1', username: 'bot_1' };
+  await admitRoom(service, 'default', bot);
+  const addressed = roomMessage(3, '@bot_1 answer', { entities: [{ type: 'mention', offset: 0, length: 6 }] });
+  await assert.rejects(service.processMessage(addressed, bot), /response_lost/);
+  assert.doesNotMatch(JSON.stringify(await service.publicState()), /roomHistory|submission/);
+  // Late arrival with an earlier message ID changes history if recomputed.
+  await service.processMessage(roomMessage(2, 'late room context'), bot);
+  await service.close(); service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  await service.processMessage(addressed, bot);
+  assert.deepEqual(f.submissions[0], f.submissions[1]);
+  await service.processMessage(addressed, bot); assert.equal(f.submissions.length, 2);
+  await service.close();
+});

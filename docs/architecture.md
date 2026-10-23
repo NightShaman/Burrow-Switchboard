@@ -2,17 +2,20 @@
 
 ## Boundaries
 
-`server/index.mjs` activates one service, registers legacy and connection-scoped operator routes and returns an asynchronous cleanup function. `server/connections.mjs` owns the persisted registry, connection lifecycle and scoped stores. `server/telegram.mjs` contains Telegram API transport, settings-backed state, routing/admission, polling and reply reconciliation. `ui/settings.js` implements the four host Settings sections.
+`server/index.mjs` activates one service, registers legacy and connection-scoped operator routes and returns an asynchronous cleanup function. `server/connections.mjs` owns the persisted registry, connection lifecycle and scoped stores. `server/telegram.mjs` contains Telegram API transport, settings-backed state, routing/admission, polling and reply reconciliation. `server/room-history.mjs` owns the shared, bounded group/topic context store and reply attribution. `ui/settings.js` implements the four host Settings sections.
 
 ```text
 Telegram message update
-  → chat/topic admission and addressed-message checks
+  → chat/topic admission
+  → record approved group human text in shared room history
+  → addressed-message checks and bounded room/quoted-reply context
   → Core agents.turns.submit (agent, session, message, idempotency key)
   → saved inbound delivery and turn ID
   → later Core agents.turns.read
   → completed answerText
   → saved outbound sending record
   → Telegram sendMessage
+  → record Telegram-confirmed reply chunks in shared room history
   → delivered or unknown
 ```
 
@@ -53,6 +56,7 @@ Configuration invalidates network work before draining the worker queue and bloc
 | Settings `mappings` | Up to 250 approved chat/topic → agent mappings |
 | Settings `pending-admissions` | Up to 100 admission requests |
 | Settings `deliveries` | Up to 200 combined recent inbound/outbound records per connection |
+| Settings `telegram-room-history` (mod-wide, not connection-prefixed) | Up to 100 chat/topic rooms, 50 messages each, 512,000 UTF-8 JSON bytes total; see [routing](routing.md#shared-group-conversation-context) |
 | Secret `telegram-bot-token` | Bot credential; never part of public state |
 
 Mapping IDs are the first 24 hex characters of SHA-256 over `telegram:<chatId>:<topicId-or-root>`. Inbound delivery IDs are `in:<updateId>`; outbound IDs are `out:<turnId>`.
@@ -66,3 +70,21 @@ The host supplies operator authentication and secret persistence. API responses 
 Admission controls the route, not each participant or every requested action. Core remains responsible for agent execution and its applicable tool/approval policies. Keep powerful agents out of broadly shared chats unless that access is intentional.
 
 Persistent offsets plus Core idempotency and outbound state support restart recovery. Unknown sends are intentionally suppressed rather than retried. Bounded collections and absent replay controls mean this is not an exactly-once, lossless messaging service. See [operations](operations.md) before extending delivery behavior.
+
+
+## Shared context boundary
+
+The connection registry creates one room-history store for all workers, using the
+unprefixed host settings store. Its own serialized queue prevents lost updates
+between independent pollers. Only group/supergroup chat+topic identities share;
+credentials, cursors, admissions, execution sessions and outboxes stay scoped.
+Successfully posted chunks are recorded using Telegram's returned message IDs,
+not inferred from Core success. Failed/unknown sends do not manufacture room text.
+A process crash between Telegram acknowledgment and history persistence can leave
+a visible message absent from this bounded context; no blind resend is attempted.
+
+No new Core capability is needed: existing settings persistence and external-turn
+submission carry the context. Full submissions are frozen in pending delivery
+records before Core is called, reused on retry and cleared after acceptance. They
+are never exposed in bootstrap/status diagnostics. Sharing never invokes a peer
+agent, so no automatic bot-to-bot wake loop is introduced.

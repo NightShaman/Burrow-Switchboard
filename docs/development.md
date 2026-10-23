@@ -21,8 +21,9 @@ For mention-based interaction, either make each bot a group administrator, or
 disable privacy for each bot with BotFather `/setprivacy` and remove/re-add it to
 the group so that change takes effect. Switchboard still routes only messages
 containing the selected bot's mention entity or replies to that bot; ordinary
-unaddressed group chatter is ignored. Bots cannot receive messages from other
-bots, regardless of privacy mode. See the [Telegram Bots FAQ](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
+unaddressed group chatter is remembered as context without triggering a response. Bots cannot receive messages from other
+bots, regardless of privacy mode. Switchboard now bridges its own confirmed bot
+replies through shared group/topic context, without waking the peer agent. See the [Telegram Bots FAQ](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
 
 Deleting a chat mapping removes only the selected connection's route and matching
 pending admission. Other connections and Telegram group membership are untouched.
@@ -38,7 +39,7 @@ Use Node.js 24 or newer in the Switchboard repository:
 
 ```bash
 npm run build
-node --test test/server.test.mjs test/ui.test.mjs
+node --test test/server.test.mjs test/room-history.test.mjs test/ui.test.mjs
 ```
 
 `build` is syntax checking for the server modules and Settings UI, not bundling or a live provider test. Service tests inject controlled fetch implementations, including activation; the Core smoke test configures a disabled connection without a token. Automated tests require no live Telegram credentials or provider calls.
@@ -56,6 +57,7 @@ BURROW_CORE_ROOT="$(cd ../Burrow-Backend && pwd)" npm run test:core
 ## Test responsibilities
 
 - `test/server.test.mjs`: admission/routing, token and API behavior, polling/reconciliation, send ambiguity and service lifecycle using controlled dependencies.
+- `test/room-history.test.mjs`: concurrent deduplication, room order, UTF-8 byte limits and Unicode-safe text truncation. Server tests additionally cover two-bot shared context/restart, private/topic/admission isolation, quoted replies, partial sends and exact-input replay.
 - `test/ui.test.mjs`: Settings rendering/actions, token preservation/replacement/clear, admission, mapping changes, retry and disposal through a fake DOM.
 - `test/core-contract.test.mjs`: real Core discovery/host smoke coverage for manifest/settings registration, bootstrap and disabled-token configuration. External-turn capabilities are mocked; this is not a real model execution or full Telegram-to-agent roundtrip.
 

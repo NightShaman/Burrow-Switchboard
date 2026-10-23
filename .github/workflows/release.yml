@@ -25,7 +25,7 @@ jobs:
       - name: Standalone and current-Core contract gate
         run: |
           npm run build
-          node --test test/server.test.mjs test/ui.test.mjs
+          node --test test/server.test.mjs test/room-history.test.mjs test/ui.test.mjs
           (cd core && npm ci --no-audit --no-fund)
           BURROW_CORE_ROOT="$GITHUB_WORKSPACE/core" npm run test:core
       - name: Assign calendar version

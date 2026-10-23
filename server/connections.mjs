@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRoomHistory } from './room-history.mjs';
 import { createTelegramApi, createTelegramConnection } from './telegram.mjs';
 
 const STATE_KEYS = ['configuration', 'transport-state', 'mappings', 'pending-admissions', 'deliveries'];
@@ -17,6 +18,7 @@ function text(value, max, error) {
 export function createSwitchboardService(options = {}) {
   const { context, fetchImpl = fetch } = options;
   if (!context?.settings || !context?.secrets || !context?.agents) throw new Error('switchboard_context_required');
+  const roomHistory = createRoomHistory({ settings: context.settings, clock: options.clock });
   const workers = new Map();
   let queue = Promise.resolve();
   let started = false;
@@ -52,7 +54,7 @@ export function createSwitchboardService(options = {}) {
           has: name => context.secrets.has(key(id, name)),
         },
       };
-      const service = createTelegramConnection({ ...options, context: scoped, connectionId: id });
+      const service = createTelegramConnection({ ...options, context: scoped, connectionId: id, roomHistory });
       workers.set(id, service);
       if (started && !closed) service.start();
     }

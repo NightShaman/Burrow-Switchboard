@@ -29,14 +29,56 @@ Messages receive a short Telegram sender/chat prefix before Core submission. Thi
 
 ## Sessions and agent changes
 
-The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-root>`. New connections use `telegram:<connectionId>:<chatId>:<topicId-or-root>` so different bots do not share history. All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
+The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-root>`. New connections use `telegram:<connectionId>:<chatId>:<topicId-or-root>` so each agent keeps its own execution history. Approved group/topic mappings additionally receive the shared room context described below; direct-chat histories remain isolated. All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
 
 In **Chat Mappings**, select an enabled agent and save to redirect subsequent messages. The route-derived session ID does not change when the agent selection changes. Do not describe this as a conversation wipe or a migration of one agent's history into another; session/history handling belongs to Core.
 
-Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. The **Delete** action removes the mapping and suppresses its outstanding inbound replies; later text can request admission again. This is not a permanent Telegram ban or cancellation of Core work already submitted. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
+Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. The **Delete** action removes only the selected connection's mapping, not the Telegram chat or other bots' mappings, and interrupts its outstanding replies. Later text can request admission again. This is not a permanent Telegram ban, a history wipe, or cancellation of Core work already submitted. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
 
 ## Limits and duplicate handling
 
 Per connection, there are at most 250 stored mappings, 100 pending admissions and 200 recent delivery records (inbound and outbound together). New entries can evict older ones. These bounded settings collections are not an unlimited queue or audit ledger.
 
 The default connection preserves Core idempotency key `telegram-update-<update_id>`; new connections use `telegram-<connectionId>-update-<update_id>` to prevent cross-bot collisions. Polling persists the next Telegram offset after processing an update. Core owns the durable idempotency contract; Switchboard also records inbound turns and outbound outcomes. This is duplicate suppression, not an unconditional exactly-once delivery guarantee. See [operations](operations.md#delivery-states-and-uncertain-outcomes).
+
+
+## Shared group conversation context
+
+Enabled, approved group/supergroup mappings in the **same Telegram chat and topic**
+share a bounded conversation record across managed bot connections. Switchboard
+records human text before checking whether it addresses that bot. Successfully
+posted agent reply chunks enter the same record with bot, connection and agent
+attribution. Telegram does not deliver bot messages to peer bots; this internal
+record supplies that missing visibility.
+
+**Visibility is not a trigger.** Only a human mention or reply to the selected bot
+submits a turn. Unaddressed human messages and peer replies are context for the
+next addressed turn, not additional turns. Two bots mentioned simultaneously can
+answer concurrently; neither is promised visibility of an answer not yet posted
+when its turn was submitted. Wait for one answer before asking the other to react.
+
+Quoted replies include original speaker, message ID and available original text
+(or caption), plus any selected quote excerpt. Known room messages carry reply IDs
+when available. Quotes are also supplied in direct chats, without sharing those
+private conversations. Context is explicitly labeled as quoted conversation data,
+not new operator instructions.
+
+The shared record is persisted in mod settings, deduplicated by Telegram message
+ID and ordered by that ID. Limits: 100 recently active rooms, 50 messages per room,
+4,000 UTF-16 units per message without splitting surrogate pairs, 512,000 serialized
+UTF-8 bytes overall, and 16,000 UTF-8 bytes of room-history JSON per submission.
+Older context can be evicted. The current message is supplied separately and is
+not duplicated in history; later messages are not included in an earlier turn.
+
+Only approved, enabled routes contribute inbound history. An approved route in a
+room joins that room's retained context, including messages recorded by other
+approved connections before it joined. Disabling/deleting a mapping stops new
+input via that route but does not erase shared room history or existing Core
+session history. Re-admission can see retained room history. Direct chats, other
+chat IDs and other topic IDs never join that record. This is not a history wipe or
+an unlimited Telegram archive; messages Telegram did not deliver cannot be recovered.
+
+The complete submission is frozen before calling Core so an uncertain submission
+can replay the exact same input after restart even if room history changes. These
+pending inputs are internal state and are omitted from public delivery diagnostics.
+As with delivery history, the 200-record connection limit still bounds recovery.
