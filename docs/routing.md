@@ -21,6 +21,8 @@ A nonempty text message from an unknown route creates or refreshes a pending ent
 
 Only `update.message` with text is processed. Media, captions without text, edited-message updates and channel-post updates are not supported by this implementation. A helper can label a chat “channel”; that is not a channel-post transport implementation.
 
+Telegram delivery is a separate gate: admin status or disabled privacy does not bypass this table. A targeted `/start@BotUsername` command can request admission if delivered, but is not itself a supported post-approval agent trigger. Follow the [group setup checklist](setup.md#groups-and-forum-topics) for command syntax, privacy, permissions and multiple bots.
+
 The first matching bot mention is removed from non-direct text. The remaining text must be nonempty. Merely putting an `@name` string in synthetic input without Telegram's mention entity does not satisfy that check. Replies to the bot need not contain a mention.
 
 Messages receive a short Telegram sender/chat prefix before Core submission. This is conversational context, not verified authorization for actions described in the text.
@@ -31,7 +33,7 @@ The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-
 
 In **Chat Mappings**, select an enabled agent and save to redirect subsequent messages. The route-derived session ID does not change when the agent selection changes. Do not describe this as a conversation wipe or a migration of one agent's history into another; session/history handling belongs to Core.
 
-Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. There is no mapping-delete API or button. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
+Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. The **Delete** action removes the mapping and suppresses its outstanding inbound replies; later text can request admission again. This is not a permanent Telegram ban or cancellation of Core work already submitted. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
 
 ## Limits and duplicate handling
 

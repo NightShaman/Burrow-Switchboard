@@ -22,6 +22,10 @@ Disabling polling pauses both ingestion and reconciliation. Clearing the token a
 
 State survives through host settings/secrets, but collections are bounded. The per-connection 200-record combined delivery limit can remove old records, including work still pending under enough traffic. Do not treat this initial implementation as an unbounded durable outbox or unlimited audit trail.
 
+## Group chat quick checks
+
+Follow the [group setup checklist](setup.md#groups-and-forum-topics) before granting more permissions. Check the exact bot connection and topic, Telegram delivery/privacy, then Switchboard admission and mention/reply filtering—in that order. `/start@BotUsername` may produce a pending request but does not act as a Switchboard start command. After approval, send a fresh human-authored `@BotUsername question` or reply to that bot. Admin status alone neither approves the route nor makes unaddressed conversation execute.
+
 ## Diagnose in order
 
 | Symptom | Check and action |
