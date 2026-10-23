@@ -2,32 +2,29 @@
 
 # Burrow Switchboard
 
-**Telegram in. Goblins out.**
+**Telegram and Discord in. Goblins out.**
 
-Burrow Switchboard connects approved external chats to real Burrow agent sessions. Telegram is the first transport; Discord comes later through the same narrow adapter boundary.
+Burrow Switchboard connects approved external chats to real Burrow agent sessions. Telegram and Discord are implemented text transports; Core executes agent turns for approved routes.
 
-## First slice
+## Implemented scope
 
-- Telegram Bot API long polling—no public webhook or reverse-proxy requirement
-- Multiple named Telegram bot connections with independent polling, routing, sessions and write-only credentials
-- Unknown chats become pending admissions and cannot reach an agent
-- Each approved chat/topic maps to one enabled Burrow agent
-- Direct chats route every approved text message
-- Group chats route only bot mentions and replies to the bot
-- Durable Telegram update idempotency prevents duplicate Burrow turns
-- Replies run through Core's ordinary agent pipeline with normal SOUL, context, tools, continuity, and session serialization
-- Agent responses return to Telegram asynchronously
-- Delivery state is durable and ambiguous outbound sends are not blindly duplicated
+- Telegram Bot API long polling and Discord Gateway WebSocket/REST use outbound connections; neither requires an inbound webhook
+- Named bot connections have immutable transport (`telegram` or `discord`), scoped admissions, routing, sessions, deliveries and write-only credentials
+- Unknown DMs/groups/topics (Telegram) and DMs/channels/threads (Discord) require approval for each bot; approval maps a route to one enabled Burrow agent
+- Approved DMs route text; group/channel/thread turns require a human mention of or reply to the selected bot
+- Approved group/topic or guild/channel context is durable, bounded and shared across approved bots; observing other messages never automatically wakes an agent
+- Core executes ordinary agent turns with normal SOUL, tools, continuity and session serialization; answers return asynchronously
+- Delivery records and duplicate suppression are bounded; ambiguous outbound sends are not blindly resent
+- Text-only baseline: no attachments, slash commands, voice or streaming
 
 ## Setup
 
-1. Create a Telegram bot with BotFather and copy its token.
-2. Install and enable Burrow Switchboard.
-3. Open **Settings → Switchboard → Configuration**, choose **Add bot connection**, name it, save its write-only token, and enable polling. Repeat for each bot.
-4. Send the bot a message from Telegram.
-5. Approve the pending chat and select the Burrow agent that should receive it.
+1. Install and enable Switchboard with a compatible Core. Create an operator-owned [Telegram bot](docs/setup.md) or [Discord application/bot](docs/discord.md).
+2. In **Settings → Switchboard → Configuration**, add a named bot connection, choose its transport, enter its write-only token and enable polling (Telegram) or gateway (Discord). Use a separate Discord application per goblin.
+3. Send a text message to the bot; approve that bot's pending route in **Pending Admissions** and select an enabled Burrow agent.
+4. Send a **fresh** text message to trigger an approved DM, or mention/reply to the bot in an approved group/channel/thread. Check **Status** for delivery outcomes.
 
-Telegram groups must mention the bot or reply to one of its messages. If Telegram privacy mode is enabled, BotFather's privacy rules still apply.
+Telegram group privacy rules still apply. Discord requires the Message Content intent and bot channel/thread permissions; see the [Discord setup and two-bot acceptance checklist](docs/discord.md).
 
 ## Development
 
@@ -42,4 +39,4 @@ Switchboard is distributed under the [Burrow Sustainable Use License](LICENSE).
 
 ## Documentation
 
-Start with the [Switchboard guide](docs/index.md) for operator setup, admission and routing, Settings, delivery troubleshooting, architecture, the mod-local API and development checks. These pages describe the current Telegram-only implementation and distinguish future capabilities.
+Start with the [Switchboard guide](docs/index.md) for operator setup, admission and routing, Settings, delivery troubleshooting, architecture, the mod-local API and development checks. These pages describe the implemented Telegram and Discord text transports and their distinct delivery boundaries.

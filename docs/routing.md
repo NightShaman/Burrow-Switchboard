@@ -1,10 +1,10 @@
 # Admission and routing
 
-## Admission is per chat and topic
+## Admission is per connection and room
 
-Within each bot connection, the route identity combines Telegram chat ID and optional topic ID. Admissions, mappings and limits are independent across connections. A direct chat, a group's root route and each forum topic have distinct keys. The displayed title is descriptive metadata, not the identity or a security boundary.
+Within each Telegram bot connection, the route identity combines chat ID and optional topic ID; for Discord each DM/channel/thread is identified by its channel ID (and guild ID for guild routes). Admissions, mappings and limits are independent across connections. A direct chat, a group's root route and each forum topic or a Discord channel and its threads have distinct keys. The displayed title is descriptive metadata, not the identity or a security boundary.
 
-A nonempty text message from an unknown route creates or refreshes a pending entry with chat/topic information, requester identity and request time. No Core turn is submitted. Pending admission is bounded to 100 entries; it is not a permanent request archive.
+A nonempty text message from an unknown Telegram route, or a nonempty human text message from an unknown Discord route, creates or refreshes a pending entry with chat/topic or channel/thread information, requester identity and request time. No Core turn is submitted. Pending admission is bounded to 100 entries; it is not a permanent request archive.
 
 **Approve** requires an existing enabled agent. It creates an enabled mapping and removes the pending entry. The triggering message is not queued: send a new message after approval.
 
@@ -14,45 +14,50 @@ A nonempty text message from an unknown route creates or refreshes a pending ent
 
 | Route | Text forwarded |
 | --- | --- |
-| Direct chat | Nonempty `message.text` |
-| Group or other non-direct mapping | Text containing a Telegram `mention` entity matching the bot username, or a reply whose original sender is the bot |
-| Forum topic | Same addressed-message rule, scoped to its own mapping |
+| Telegram direct chat | Nonempty `message.text` |
+| Telegram group or other non-direct mapping | Text containing a Telegram `mention` entity matching the bot username, or a reply whose original sender is the bot |
+| Telegram forum topic | Same addressed-message rule, scoped to its own mapping |
+| Discord DM | Every approved nonempty human text message |
+| Discord guild channel or thread | Human text mentioning the selected bot or replying to its message |
 | Disabled mapping | Nothing; it does not return to pending admissions |
 
-Only `update.message` with text is processed. Media, captions without text, edited-message updates and channel-post updates are not supported by this implementation. A helper can label a chat “channel”; that is not a channel-post transport implementation.
+For Telegram, only `update.message` with text is processed. Media, captions without text, edited-message updates and channel-post updates are not supported by this implementation. A helper can label a chat “channel”; that is not a channel-post transport implementation.
+
+Discord handles `MESSAGE_CREATE` text via Gateway; attachments, slash commands, voice and streaming are outside the text-only baseline. Discord bot/webhook senders cannot create admissions or trigger turns; on approved routes their text may contribute context. Guild channel/thread text from humans without a mention/reply is context only. Threads do not inherit parent-channel approval. Discord delivery (including Message Content intent and channel/thread permissions) is a separate gate; see [setup](discord.md).
 
 Telegram delivery is a separate gate: admin status or disabled privacy does not bypass this table. A targeted `/start@BotUsername` command can request admission if delivered, but is not itself a supported post-approval agent trigger. Follow the [group setup checklist](setup.md#groups-and-forum-topics) for command syntax, privacy, permissions and multiple bots.
 
-The first matching bot mention is removed from non-direct text. The remaining text must be nonempty. Merely putting an `@name` string in synthetic input without Telegram's mention entity does not satisfy that check. Replies to the bot need not contain a mention.
+On Telegram the first matching bot mention is removed from non-direct text; on Discord bot mention markup is removed from addressed guild text. The remaining text must be nonempty. Merely putting an `@name` string in synthetic input without Telegram's mention entity does not satisfy that check. Replies to the bot need not contain a mention.
 
-Messages receive a short Telegram sender/chat prefix before Core submission. This is conversational context, not verified authorization for actions described in the text.
+Messages receive a short transport-specific sender/room prefix before Core submission. This is conversational context, not verified authorization for actions described in the text.
 
 ## Sessions and agent changes
 
-The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-root>`. New connections use `telegram:<connectionId>:<chatId>:<topicId-or-root>` so each agent keeps its own execution history. Approved group/topic mappings additionally receive the shared room context described below; direct-chat histories remain isolated. All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
+The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-root>`. New connections use `telegram:<connectionId>:<chatId>:<topicId-or-root>` so each agent keeps its own execution history. Discord uses `discord:<connectionId>:<channelId>` (IDs remain strings) for each mapped DM/channel/thread. Approved group/topic and Discord guild-channel/thread mappings additionally receive bounded shared room context described below; DMs remain connection-isolated. All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
 
 In **Chat Mappings**, select an enabled agent and save to redirect subsequent messages. The route-derived session ID does not change when the agent selection changes. Do not describe this as a conversation wipe or a migration of one agent's history into another; session/history handling belongs to Core.
 
-Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. The **Delete** action removes only the selected connection's mapping, not the Telegram chat or other bots' mappings, and interrupts its outstanding replies. Later text can request admission again. This is not a permanent Telegram ban, a history wipe, or cancellation of Core work already submitted. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
+Uncheck **Enabled** and save to stop new messages on that route. The mapping remains visible and can be re-enabled. The **Delete** action removes only the selected connection's mapping, not the provider chat or other bots' mappings, and interrupts its outstanding replies. Later text can request admission again. This is not a permanent provider ban, a history wipe, or cancellation of Core work already submitted. Mapping updates validate the selected agent even when disabling, so choose an existing enabled agent if a formerly selected agent has been disabled or removed.
 
 ## Limits and duplicate handling
 
 Per connection, there are at most 250 stored mappings, 100 pending admissions and 200 recent delivery records (inbound and outbound together). New entries can evict older ones. These bounded settings collections are not an unlimited queue or audit ledger.
 
-The default connection preserves Core idempotency key `telegram-update-<update_id>`; new connections use `telegram-<connectionId>-update-<update_id>` to prevent cross-bot collisions. Polling persists the next Telegram offset after processing an update. Core owns the durable idempotency contract; Switchboard also records inbound turns and outbound outcomes. This is duplicate suppression, not an unconditional exactly-once delivery guarantee. See [operations](operations.md#delivery-states-and-uncertain-outcomes).
+The default connection preserves Core idempotency key `telegram-update-<update_id>`; new connections use `telegram-<connectionId>-update-<update_id>` to prevent cross-bot collisions. Discord uses `discord-<connectionId>-message-<messageId>`; Gateway resume/heartbeat and durable delivery state support reconnection, but are not exactly-once messaging. Telegram polling persists the next offset after processing an update. Core owns the durable idempotency contract; Switchboard also records inbound turns and outbound outcomes. This is duplicate suppression, not an unconditional exactly-once delivery guarantee. See [operations](operations.md#delivery-states-and-uncertain-outcomes).
 
 
-## Shared group conversation context
+## Shared group and channel conversation context
 
 Enabled, approved group/supergroup mappings in the **same Telegram chat and topic**
 share a bounded conversation record across managed bot connections. Switchboard
 records human text before checking whether it addresses that bot. Successfully
 posted agent reply chunks enter the same record with bot, connection and agent
-attribution. Telegram does not deliver bot messages to peer bots; this internal
+attribution. Ordinary Telegram bot delivery does not guarantee peer bot messages; this internal
 record supplies that missing visibility.
 
-**Visibility is not a trigger.** Only a human mention or reply to the selected bot
-submits a turn. Unaddressed human messages and peer replies are context for the
+**Visibility is not a trigger.** An addressed mention or reply to the selected bot
+submits a turn on approved Telegram non-direct routes; on Discord these triggers
+must come from a human, never a bot or webhook. Unaddressed human messages and peer replies are context for the
 next addressed turn, not additional turns. Two bots mentioned simultaneously can
 answer concurrently; neither is promised visibility of an answer not yet posted
 when its turn was submitted. Wait for one answer before asking the other to react.
@@ -77,6 +82,8 @@ input via that route but does not erase shared room history or existing Core
 session history. Re-admission can see retained room history. Direct chats, other
 chat IDs and other topic IDs never join that record. This is not a history wipe or
 an unlimited Telegram archive; messages Telegram did not deliver cannot be recovered.
+
+Discord independently persists bounded shared history per guild+channel (a thread ID is its own channel room) across approved bots. Discord DMs use connection-isolated history; no parent/thread or cross-guild context merge. On approved guild routes, human text and observed bot/webhook text can be context, while only a human mention/reply to the selected bot starts a turn. Posted bot answers enter history after confirmed REST sends. Only past bounded entries are submitted to Core, as quoted data rather than instructions; the current message is separate. Discord room limits are 100 rooms, 50 messages per room, 4,000 UTF-16 units per message, 512,000 serialized UTF-8 bytes total, and 16,000 UTF-8 bytes of context per submission. DMs do not share across bot connections.
 
 The complete submission is frozen before calling Core so an uncertain submission
 can replay the exact same input after restart even if room history changes. These

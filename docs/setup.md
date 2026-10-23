@@ -1,5 +1,7 @@
 # Set up Telegram
 
+For Discord applications, intents, permissions and two-bot/thread acceptance, see [Set up Discord](discord.md). This page covers Telegram-specific BotFather, privacy and polling.
+
 ## Before you start
 
 You need an operator-controlled Telegram bot token, Switchboard installed and enabled in Burrow, and at least one enabled Burrow agent. Core must expose `context.agents.turns.submit` and `context.agents.turns.read`; Switchboard reports their availability in Settings. Its Node.js package declares **Node 24 or newer**.
@@ -10,7 +12,7 @@ Keep the token secret. Do not paste it into chat, screenshots, logs, shell comma
 
 1. Create your bot through Telegram's BotFather and retain the token securely.
 2. Install and enable the Switchboard mod using Burrow's normal mod workflow. Its manifest ID is `burrow-switchboard`; its Settings navigation label is **Switchboard**.
-3. Open **Settings → Switchboard → Configuration**. Choose **Add bot connection**, enter a name and token, enable polling, and save. For an existing migrated connection, select it and save its token.
+3. Open **Settings → Switchboard → Configuration**. Choose **Add bot connection**, select **Telegram**, enter a name and token, enable polling, and save. For an existing migrated connection, select it and save its token.
 4. Open **Status** and select that bot connection. Confirm the bot identity, healthy/active transport, and available Core agent turns. Status is a snapshot: revisit the section to refresh it.
 5. Send a nonempty text message to the bot in Telegram. This creates a pending admission; it does **not** run the agent.
 6. Open **Pending Admissions**, select the same **Bot connection**, verify the chat/topic information, choose an enabled agent, and approve.
@@ -55,9 +57,9 @@ When several privacy-enabled bots are present, Telegram can deliver a given mess
 
 ### Messages from other bots
 
-Bots normally do not receive other bots' messages. Current Telegram documentation also describes an **opt-in Bot-to-Bot Communication Mode** with specific group/private-chat conditions, so “bots can never see bots” is no longer a safe blanket statement. This human-to-bot setup guide does not enable or validate that feature. Do not use another bot's message as your basic connectivity test; use a human account. The inspected Switchboard code neither rejects bot senders nor implements dedicated bot-to-bot loop limits. Bot-to-bot operation needs deliberate loop/rate/depth safeguards, not just admin status; do not enable it as a shortcut for this setup. [Current bot-to-bot rules](https://core.telegram.org/api/bots/bot-to-bot).
+Switchboard bridges its own confirmed bot replies into shared group/topic context, without waking a peer agent. Test connectivity using a human account. This release does not change Telegram's bot-to-bot delivery behavior.
 
-Group instructions checked **2026-10-23** against Telegram's official documentation and Switchboard `e87cc8aa261e7b74ebb7fbc01e484059dcb3f900` (**2026.10.23.2**).
+Telegram group instructions were checked **2026-10-23** against Telegram's official documentation and Switchboard `e87cc8aa261e7b74ebb7fbc01e484059dcb3f900` (**2026.10.23.2**). That historical check does not establish live Discord behavior.
 
 ## Safe first test
 
@@ -69,4 +71,4 @@ Uncheck polling and save to pause ingestion **and reply reconciliation** while r
 
 ## Add more bots
 
-Repeat **Configuration → Add bot connection** for each BotFather bot. Each has its own credential, poll cursor, admissions, mappings, delivery records and Core sessions. Select the intended bot before approving its pending chat. The same Telegram chat/topic can route independently through different bots without sharing a conversation or idempotency key. Removing or pausing one connection does not stop the others.
+Repeat **Configuration → Add bot connection** for each BotFather bot. Each has its own credential, poll cursor, admissions, mappings, delivery records and Core sessions. Select the intended bot before approving its pending chat. The same Telegram chat/topic can route independently through different bots with distinct Core sessions and idempotency keys, while approved group/topic connections share bounded room context. Removing or pausing one connection does not stop the others.

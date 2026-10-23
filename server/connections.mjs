@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createRoomHistory } from './room-history.mjs';
 import { createTelegramApi, createTelegramConnection } from './telegram.mjs';
+import { createDiscordApi, createDiscordConnection } from './discord.mjs';
 
 const STATE_KEYS = ['configuration', 'transport-state', 'mappings', 'pending-admissions', 'deliveries'];
 const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
@@ -20,6 +21,7 @@ export function createSwitchboardService(options = {}) {
   if (!context?.settings || !context?.secrets || !context?.agents) throw new Error('switchboard_context_required');
   const roomHistory = createRoomHistory({ settings: context.settings, clock: options.clock });
   const workers = new Map();
+  const kinds = new Map();
   let queue = Promise.resolve();
   let started = false;
   let closed = false;
@@ -29,13 +31,19 @@ export function createSwitchboardService(options = {}) {
     return result;
   };
   const key = (id, name) => id === 'default' ? name : `connection-${id}-${name}`;
-  const tokenKey = id => key(id, 'telegram-bot-token');
+  const kindFor = id => kinds.get(id) || 'telegram';
+  const tokenKey = id => key(id, `${kindFor(id)}-bot-token`);
   async function registry() {
     let list = await context.settings.get('connections', null);
     if (list === null) {
       const state = await context.settings.get('transport-state', {});
       list = [{ id: 'default', name: 'Telegram', botId: state?.bot?.id ? String(state.bot.id) : null }];
       await context.settings.set('connections', list);
+    }
+    for (const item of list) {
+      const kind = item.transport || 'telegram';
+      if (!['telegram', 'discord'].includes(kind)) fail('connection_transport_invalid');
+      kinds.set(item.id, kind);
     }
     return list;
   }
@@ -54,7 +62,9 @@ export function createSwitchboardService(options = {}) {
           has: name => context.secrets.has(key(id, name)),
         },
       };
-      const service = createTelegramConnection({ ...options, context: scoped, connectionId: id, roomHistory });
+      const service = kindFor(id) === 'discord'
+        ? createDiscordConnection({ ...options, context: scoped, connectionId: id, discordHistorySettings: context.settings })
+        : createTelegramConnection({ ...options, context: scoped, connectionId: id, roomHistory });
       workers.set(id, service);
       if (started && !closed) service.start();
     }
@@ -68,48 +78,56 @@ export function createSwitchboardService(options = {}) {
   }
   async function publicState() {
     const list = await registry();
-    const connections = await Promise.all(list.map(async item => ({ id: item.id, name: item.name, ...await worker(item.id).publicState() })));
+    const connections = await Promise.all(list.map(async item => ({ id: item.id, name: item.name, transportType: kindFor(item.id), ...await worker(item.id).publicState() })));
     const legacy = connections.find(item => item.id === 'default');
     const coreAgentTurns = connections[0]?.coreAgentTurns || (context.agents?.turns?.submit && context.agents?.turns?.read ? { available: true } : { available: false, reason: 'core_external_agent_turns_unavailable' });
     return { ...(legacy || { enabled: false, tokenConfigured: false, bot: { configured: false }, transport: { enabled: false, health: 'stopped', polling: 'stopped' }, mappings: [], pending: [], deliveries: [] }), coreAgentTurns, connections };
   }
-  async function identity(token) {
+  async function identity(token, kind = 'telegram') {
     let bot;
-    try { bot = await createTelegramApi({ token, fetchImpl }).getMe({ signal: AbortSignal.timeout(15_000) }); }
-    catch (error) { fail(['telegram_auth_failed', 'telegram_rate_limited'].includes(error.message) ? error.message : 'telegram_token_validation_failed'); }
+    try { bot = await (kind === 'discord' ? createDiscordApi : createTelegramApi)({ token, fetchImpl }).getMe({ signal: AbortSignal.timeout(15_000) }); }
+    catch (error) { fail([`${kind}_auth_failed`, `${kind}_rate_limited`].includes(error.message) ? error.message : `${kind}_token_validation_failed`); }
+    if (kind === 'discord') {
+      if (typeof bot?.id !== 'string' || !/^\d{1,32}$/.test(bot.id) || bot.bot !== true) fail('discord_response_invalid');
+      return { id: bot.id, username: bot.username || null, displayName: bot.global_name || bot.username || null, bot: true };
+    }
     if (!bot?.id || bot.is_bot === false) fail('telegram_response_invalid');
     return { id: String(bot.id), username: bot.username || null, displayName: [bot.first_name, bot.last_name].filter(Boolean).join(' ') || null };
   }
   async function validateToken(id, token, list, boundId = null) {
-    const bot = await identity(token);
-    if (boundId && String(boundId) !== bot.id) fail('telegram_bot_changed_add_connection', 409);
+    const kind = kindFor(id);
+    const bot = await identity(token, kind);
+    if (boundId && String(boundId) !== bot.id) fail(`${kind}_bot_changed_add_connection`, 409);
     for (const item of list) {
-      if (item.id === id) continue;
+      if (item.id === id || kindFor(item.id) !== kind) continue;
       const state = await context.settings.get(key(item.id, 'transport-state'), {});
       let otherId = item.botId || state?.bot?.id;
       const saved = await context.secrets.get(tokenKey(item.id));
-      if (saved === token) fail('telegram_bot_already_connected', 409);
+      if (saved === token) fail(`${kind}_bot_already_connected`, 409);
       // Old installations may not yet have polled once. Resolve their identity
       // before admitting another poller rather than accidentally sharing a bot.
-      if (!otherId && saved) otherId = (await identity(saved)).id;
-      if (String(otherId || '') === bot.id) fail('telegram_bot_already_connected', 409);
+      if (!otherId && saved) otherId = (await identity(saved, kind)).id;
+      if (String(otherId || '') === bot.id) fail(`${kind}_bot_already_connected`, 409);
     }
     return bot;
   }
   async function create(input) {
-    const value = inputObject(input, ['name', 'token', 'enabled']);
+    const value = inputObject(input, ['name', 'token', 'enabled', 'transport']);
     const name = text(value.name, 80, 'connection_name_invalid');
-    const token = text(value.token, 4096, 'telegram_token_invalid');
+    const kind = value.transport ?? 'telegram';
+    if (!['telegram', 'discord'].includes(kind)) fail('connection_transport_invalid');
+    const token = text(value.token, 4096, `${kind}_token_invalid`);
     if (typeof value.enabled !== 'boolean') fail('connection_invalid');
     const list = await registry();
     const id = randomUUID();
+    kinds.set(id, kind);
     const bot = await validateToken(id, token, list);
     // Publish the registry last so a half-written creation cannot be polled.
     await context.secrets.set(tokenKey(id), token);
     try {
       await context.settings.set(key(id, 'configuration'), { enabled: value.enabled });
       await context.settings.set(key(id, 'transport-state'), { bot, offset: 0, health: value.enabled ? 'unknown' : 'stopped', polling: value.enabled ? 'starting' : 'stopped', error: null });
-      await context.settings.set('connections', [...list, { id, name, botId: bot.id }]);
+      await context.settings.set('connections', [...list, { id, name, transport: kind, botId: bot.id }]);
     } catch (error) {
       await context.secrets.clear(tokenKey(id));
       for (const name of STATE_KEYS) await context.settings.delete(key(id, name));
@@ -122,15 +140,16 @@ export function createSwitchboardService(options = {}) {
     const value = inputObject(input, ['name', 'enabled', 'token']);
     if (typeof value.enabled !== 'boolean') fail('configuration_invalid');
     const { list, found } = await entry(id);
+    const kind = kindFor(id);
     const name = value.name === undefined ? found.name : text(value.name, 80, 'connection_name_invalid');
     let token, bot;
     if (value.token !== undefined) {
-      token = text(value.token, 4096, 'telegram_token_invalid');
+      token = text(value.token, 4096, `${kind}_token_invalid`);
       const oldState = await context.settings.get(key(id, 'transport-state'), {});
       let boundId = found.botId || oldState?.bot?.id;
       const saved = await context.secrets.get(tokenKey(id));
-      if (!boundId && saved && saved !== token) boundId = (await identity(saved)).id;
-      if (!boundId && found.bindingUnknown) fail('telegram_bot_changed_add_connection', 409);
+      if (!boundId && saved && saved !== token) boundId = (await identity(saved, kind)).id;
+      if (!boundId && found.bindingUnknown) fail(`${kind}_bot_changed_add_connection`, 409);
       bot = await validateToken(id, token, list, boundId);
     }
     await worker(id).configure({ enabled: value.enabled, ...(token === undefined ? {} : { token, bot }) });
@@ -156,6 +175,7 @@ export function createSwitchboardService(options = {}) {
     await worker(id).clearToken();
     await worker(id).close();
     workers.delete(id);
+    kinds.delete(id);
     await context.settings.set('connections', list.filter(item => item.id !== id));
     for (const name of STATE_KEYS) await context.settings.delete(key(id, name));
     return publicState();

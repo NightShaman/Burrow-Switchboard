@@ -12,11 +12,11 @@
         "id": "status",
         "navigation": {
           "title": "Status",
-          "description": "Monitor Telegram transport health, routing, and recent delivery state."
+          "description": "Monitor Telegram or Discord transport health, routing, and recent delivery state."
         },
         "primary": {
           "title": "Status",
-          "description": "Review Telegram, Core availability, admissions, mappings, and bounded delivery diagnostics.",
+          "description": "Review bot transport, Core availability, admissions, mappings, and bounded delivery diagnostics.",
           "capability": "settingsUi"
         }
       },
@@ -28,7 +28,7 @@
         },
         "primary": {
           "title": "Configuration",
-          "description": "Configure the Telegram bot and transport lifecycle.",
+          "description": "Configure Telegram or Discord bot connections and transport lifecycle.",
           "capability": "settingsUi"
         }
       },
@@ -36,7 +36,7 @@
         "id": "pending-admissions",
         "navigation": {
           "title": "Pending admissions",
-          "description": "Approve Telegram chats before they can reach a Burrow agent."
+          "description": "Approve Telegram or Discord routes before they can reach a Burrow agent."
         },
         "primary": {
           "title": "Pending admissions",
@@ -48,7 +48,7 @@
         "id": "chat-mappings",
         "navigation": {
           "title": "Chat mappings",
-          "description": "Manage approved Telegram chat-to-agent routing."
+          "description": "Manage approved Telegram or Discord chat-to-agent routing."
         },
         "primary": {
           "title": "Chat mappings",

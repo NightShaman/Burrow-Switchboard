@@ -1,4 +1,4 @@
-import { createSwitchboardService } from './telegram.mjs';
+import { createSwitchboardService } from './connections.mjs';
 
 function requireOperator(request) {
   if (request?.auth?.enabled === true && request.auth.authenticated !== true) throw Object.assign(new Error('operator_authentication_required'), { statusCode: 401 });
@@ -40,4 +40,4 @@ export async function activate(context, options = {}) {
   return async () => { await service.close(); context.logger.info('Burrow Switchboard stopped'); };
 }
 
-export { createSwitchboardService } from './telegram.mjs';
+export { createSwitchboardService } from './connections.mjs';

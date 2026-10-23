@@ -24,7 +24,7 @@ const byText = (root, tag, text) => byTag(root, tag).find(node => node.textConte
 const byAttr = (root, tag, name, value) => byTag(root, tag).find(node => node.getAttribute(name) === value);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const connection = (id, name, overrides = {}) => ({ id, name, enabled: true, tokenConfigured: true, bot: { configured: true, id: id === 'default' ? '42' : '84', username: id === 'default' ? 'switchboard_bot' : 'alerts_bot' }, transport: { enabled: true, health: 'healthy', polling: 'active', lastPollAt: '2026-10-22T15:00:00Z' }, mappings: [{ id: `map-${id}`, chatId: `-${id}`, chatTitle: `${name} Council`, chatType: 'group', agentId: 'hatchet', agentName: 'Hatchet', enabled: true }], pending: [{ id: `pending-${id}`, chatId: id, chatTitle: `${name} Rob`, chatType: 'direct', requestedAt: '2026-10-22T14:00:00Z' }], deliveries: [{ id: `delivery-${id}`, direction: 'inbound', chatTitle: `${name} Rob`, agentName: 'Hatchet', status: 'delivered', at: '2026-10-22T15:01:00Z' }], ...overrides });
-const config = () => ({ connections: [connection('default', 'Primary'), connection('alerts', 'Alerts')], coreAgentTurns: { available: true } });
+const config = () => ({ connections: [connection('default', 'Primary'), connection('alerts', 'Alerts', { transportType: 'discord', transport: { kind: 'discord', enabled: true, health: 'healthy', polling: 'connected', lastPollAt: '2026-10-22T15:00:00Z' }, mappings: [{ id: 'map-alerts', chatId: 'channel-84', chatTitle: 'Alerts Council', chatType: 'channel', topicId: 'thread-7', agentId: 'hatchet', agentName: 'Hatchet', enabled: true }] })], coreAgentTurns: { available: true } });
 const selectConnection = async (root, id) => { const select = byAttr(root, 'select', 'aria-label', 'Bot connection'); select.value = id; await select.dispatchEvent({ type: 'change' }); };
 
 test.beforeEach(() => { globalThis.document = documentFixture; globalThis.confirm = () => true; });
@@ -39,22 +39,24 @@ test('Settings status selects one bot connection for scoped diagnostics', async 
   const signal = calls[0].init.signal; cleanup(); assert.equal(signal.aborted, true); assert.equal(root.children.length, 0);
 });
 
-test('Configuration creates named connections with a write-only token', async () => {
+test('Configuration creates Telegram and Discord connections with write-only tokens', async () => {
   assert.deepEqual(settingsSections.map(item => item.id), ['status', 'configuration', 'pending-admissions', 'chat-mappings']);
   const root = new FakeNode('div'); const calls = []; const api = async (path, init = {}) => { calls.push({ path, init }); return config(); };
   const cleanup = mountSettings({ section: 'configuration', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [], api }); await settle();
+  assert.deepEqual(byAttr(root, 'select', 'aria-label', 'Bot connection').children.map(option => option.textContent), ['Primary · Telegram (@switchboard_bot)', 'Alerts · Discord (@alerts_bot)']);
   await byText(root, 'button', 'Add bot connection').dispatchEvent({ type: 'click' });
   const createForm = byTag(root, 'form').find(form => form.textContent.includes('New bot connection')); const inputs = byTag(createForm, 'input');
-  const name = inputs.find(input => input.id === 'switchboard-new-name'); const token = inputs.find(input => input.id === 'switchboard-new-token'); const enabled = inputs.find(input => input.type === 'checkbox');
+  const provider = byAttr(createForm, 'select', 'aria-label', 'Transport'); const name = inputs.find(input => input.id === 'switchboard-new-name'); const token = inputs.find(input => input.id === 'switchboard-new-token'); const enabled = inputs.find(input => input.type === 'checkbox');
+  assert.equal(provider.value, 'telegram'); provider.value = 'discord'; await provider.dispatchEvent({ type: 'change' }); assert.match(createForm.textContent, /Message Content intent/); assert.match(createForm.textContent, /View Channels, Send Messages, Read Message History, and Send Messages in Threads/); assert.equal(token.getAttribute('placeholder'), 'Paste Discord bot token');
   name.value = 'Support'; token.value = 'write-only-token'; enabled.checked = false; await createForm.dispatchEvent({ type: 'submit', preventDefault() {} }); await settle();
-  const create = calls.find(call => call.path === '/connections'); assert.equal(create.init.method, 'POST'); assert.deepEqual(JSON.parse(create.init.body), { name: 'Support', token: 'write-only-token', enabled: false }); cleanup();
+  const create = calls.find(call => call.path === '/connections'); assert.equal(create.init.method, 'POST'); assert.deepEqual(JSON.parse(create.init.body), { name: 'Support', token: 'write-only-token', enabled: false, transport: 'discord' }); cleanup();
 });
 
 test('Configuration edits only the selected connection and preserves blank tokens', async () => {
   const root = new FakeNode('div'); const calls = []; const api = async (path, init = {}) => { calls.push({ path, init }); return config(); };
   const cleanup = mountSettings({ section: 'configuration', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [], api }); await settle(); await selectConnection(root, 'alerts');
   const form = byTag(root, 'form').find(item => !item.textContent.includes('New bot connection')); const name = byTag(form, 'input').find(input => input.id === 'switchboard-name'); const token = byTag(form, 'input').find(input => input.type === 'password'); const enabled = byTag(form, 'input').find(input => input.type === 'checkbox');
-  assert.equal(token.value, ''); name.value = 'Alerts renamed'; enabled.checked = false; await form.dispatchEvent({ type: 'submit', preventDefault() {} }); await settle();
+  assert.equal(token.value, ''); assert.equal(byAttr(form, 'input', 'aria-label', 'Connection transport').value, 'Discord'); assert.match(form.textContent, /Transport cannot be changed/); name.value = 'Alerts renamed'; enabled.checked = false; await form.dispatchEvent({ type: 'submit', preventDefault() {} }); await settle();
   const update = calls.find(call => call.path === '/connections/alerts' && call.init.method === 'PUT'); assert.deepEqual(JSON.parse(update.init.body), { name: 'Alerts renamed', enabled: false });
   token.value = 'same-bot-token'; await form.dispatchEvent({ type: 'submit', preventDefault() {} }); await settle(); assert.equal(JSON.parse(calls.filter(call => call.path === '/connections/alerts').at(-1).init.body).token, 'same-bot-token'); cleanup();
 });
@@ -83,7 +85,7 @@ test('Mappings save and delete through the selected connection', async () => {
   const update = calls.find(call => call.path === '/connections/alerts/mappings/map-alerts' && call.init.method === 'PUT'); assert.deepEqual(JSON.parse(update.init.body), { agentId: 'smatchet', enabled: false });
   await selectConnection(root, 'alerts'); await byText(root, 'button', 'Delete').dispatchEvent({ type: 'click' }); await settle();
   const remove = calls.find(call => call.path === '/connections/alerts/mappings/map-alerts' && call.init.method === 'DELETE'); assert.ok(remove); assert.equal(remove.init.body, undefined);
-  assert.match(confirmations.at(-1), /only this bot connection’s Switchboard mapping/); assert.match(confirmations.at(-1), /does not delete the Telegram chat or affect other bots/); assert.match(confirmations.at(-1), /Future messages will require readmission/); cleanup();
+  assert.match(confirmations.at(-1), /only this bot connection’s Switchboard mapping/); assert.match(confirmations.at(-1), /does not delete the Discord chat or affect other bots/); assert.match(confirmations.at(-1), /Future messages will require readmission/); cleanup();
 });
 
 test('Mapping deletion stops when confirmation is cancelled', async () => {

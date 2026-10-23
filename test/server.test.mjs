@@ -461,3 +461,52 @@ test('uncertain Core submission replays byte-identical context after history cha
   await service.processMessage(addressed, bot); assert.equal(f.submissions.length, 2);
   await service.close();
 });
+
+test('mixed transport registry preserves Telegram and isolates Discord identity, credentials, routes and restart', async () => {
+  const bots = { 'discord-h': { id: '123456789012345678', bot: true, username: 'hatchet' }, 'discord-s': { id: '123456789012345679', bot: true, username: 'smatchet' }, 'discord-replacement': { id: '123456789012345680', bot: true, username: 'other' } };
+  const fetchImpl = async (url, init) => {
+    if (url.includes('api.telegram.org')) return { ok: true, status: 200, json: async () => ({ ok: true, result: { id: 123456, is_bot: true, username: 'tg_bot' } }) };
+    if (url.endsWith('/users/@me')) {
+      const bot = bots[init.headers.Authorization.slice(4)];
+      return { ok: Boolean(bot), status: bot ? 200 : 401, json: async () => bot || { error: 'private-token' } };
+    }
+    if (url.includes('/channels/')) return { ok: true, status: 200, json: async () => ({ id: '223456789012345678', guild_id: '323456789012345678', type: 0, name: 'Council' }) };
+    throw new Error('unexpected network request');
+  };
+  const f = fixture(); const options = { context: f.context, fetchImpl };
+  let service = createSwitchboardService(options);
+  await service.configure({ enabled: false, token: 'telegram-secret' });
+  const first = await service.createConnection({ name: 'Hatchet Discord', transport: 'discord', token: 'discord-h', enabled: true });
+  const h = first.connections.find(item => item.transportType === 'discord');
+  assert.equal(first.transportType, 'telegram'); assert.equal(h.bot.id, bots['discord-h'].id);
+  assert.equal(f.secrets.get(`connection-${h.id}-discord-bot-token`), 'discord-h');
+  await assert.rejects(service.createConnection({ name: 'Duplicate', transport: 'discord', token: 'discord-h', enabled: true }), /discord_bot_already_connected/);
+  await assert.rejects(service.createConnection({ name: 'Invalid', transport: 'matrix', token: 'anything', enabled: false }), /connection_transport_invalid/);
+  await assert.rejects(service.configureConnection(h.id, { transport: 'telegram', enabled: false }), /connection_invalid/);
+  const state = await service.createConnection({ name: 'Smatchet Discord', transport: 'discord', token: 'discord-s', enabled: true });
+  const s = state.connections.find(item => item.name === 'Smatchet Discord');
+  const event = (id, content, botId) => ({ id, channel_id: '223456789012345678', guild_id: '323456789012345678', content, author: { id: '423456789012345678', username: 'King' }, mentions: botId ? [{ id: botId }] : [] });
+  await service.processMessage(event('523456789012345678', 'hello room'), bots['discord-h'], h.id);
+  await service.processMessage(event('523456789012345678', 'hello room'), bots['discord-s'], s.id);
+  for (const id of [h.id, s.id]) {
+    const connection = (await service.publicState()).connections.find(item => item.id === id);
+    assert.equal(connection.pending[0].chatTitle, 'Council');
+    await service.approveConnection(id, connection.pending[0].id, { agentId: 'hatchet' });
+  }
+  await service.processMessage(event('523456789012345679', 'passive shared speech'), bots['discord-h'], h.id);
+  await service.close(); service = createSwitchboardService(options);
+  await service.processMessage(event('523456789012345680', '<@123456789012345679> what did he say?', bots['discord-s'].id), bots['discord-s'], s.id);
+  assert.equal(f.submissions.length, 1); assert.match(f.submissions[0].message, /passive shared speech/);
+  assert.equal(f.submissions[0].sessionId, `discord:${s.id}:223456789012345678`);
+  await service.clearConnectionToken(h.id);
+  assert.equal(f.secrets.has(`connection-${h.id}-discord-bot-token`), false);
+  assert.equal(f.secrets.get('telegram-bot-token'), 'telegram-secret');
+  await assert.rejects(service.configureConnection(h.id, { token: 'discord-replacement', enabled: true }), /discord_bot_changed_add_connection/);
+  await service.removeConnection(h.id);
+  assert.equal(f.secrets.get(`connection-${s.id}-discord-bot-token`), 'discord-s');
+  const remaining = (await service.publicState()).connections;
+  assert.equal(remaining.find(item => item.id === s.id).mappings.length, 1);
+  assert.equal(remaining.some(item => item.id === h.id), false);
+  assert.doesNotMatch(JSON.stringify(await service.publicState()), /discord-h|discord-s|telegram-secret/);
+  await service.close();
+});
