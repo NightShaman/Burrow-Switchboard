@@ -285,3 +285,63 @@ test('disabling cannot start a replacement poll while configuration persistence 
   assert.equal((await service.publicState()).transport.polling, 'stopped');
   await service.close();
 });
+
+test('deleting a mapping is bot/topic scoped, preserves history and suppresses queued replies across re-admission', async () => {
+  const f = multiFixture();
+  const service = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  const created = await service.createConnection({ name: 'Second', token: 'two-token', enabled: false });
+  const other = created.connections[1].id;
+  const bot = { id: '1', username: 'bot_1' };
+  const update = { update_id: 90, message: { message_id: 10, chat: { id: -100, type: 'group', title: 'Council' }, from: { id: 5 }, text: 'hi @bot_1', entities: [{ type: 'mention', offset: 3, length: 6 }] } };
+  for (const id of ['default', other]) {
+    await service.processMessage(update, bot, id);
+    const pending = (await service.publicState()).connections.find(c => c.id === id).pending[0];
+    await service.approveConnection(id, pending.id, { agentId: 'hatchet' });
+    await service.processMessage(update, bot, id);
+  }
+  const before = await service.publicState(); const mapping = before.mappings[0];
+  f.settings.set('pending-admissions', [{ ...mapping }, { id: 'unrelated' }]);
+  const unrelated = { id: 'in:91', direction: 'inbound', chatId: '-100', topicId: 22, turnId: 'other-topic', status: 'processing' };
+  const delivered = { id: 'out:old', direction: 'outbound', chatId: '-100', topicId: null, status: 'delivered' };
+  f.settings.set('deliveries', [...f.settings.get('deliveries'), unrelated, delivered]);
+  const result = await service.deleteMapping(mapping.id);
+  assert.equal(result.mappings.length, 0);
+  assert.deepEqual(result.pending, [{ id: 'unrelated' }]);
+  assert.equal(result.deliveries.find(d => d.id === 'in:90').error, 'mapping_deleted');
+  assert.equal(result.deliveries.find(d => d.id === 'in:90').status, 'interrupted');
+  assert.deepEqual(f.settings.get('deliveries').find(d => d.id === 'in:91'), unrelated);
+  assert.deepEqual(f.settings.get('deliveries').find(d => d.id === 'out:old'), delivered);
+  assert.deepEqual(result.connections[1], before.connections[1]);
+  await assert.rejects(service.deleteMapping(mapping.id), /mapping_not_found/);
+  // New messages need admission again, and re-approval cannot revive the old reply.
+  await service.processMessage({ ...update, update_id: 92 }, bot);
+  assert.equal(f.submissions.length, 2);
+  await service.approve(mapping.id, { agentId: 'hatchet' });
+  await service.close();
+  const restarted = createSwitchboardService({ context: f.context, fetchImpl: f.fetchImpl });
+  f.context.agents.turns.read = async id => ({ id, status: 'succeeded', result: { answerText: id } });
+  const sent = [];
+  await restarted.reconcile({ sendMessage: async v => sent.push(v) });
+  assert.deepEqual(sent.map(v => v.text), ['other-topic']);
+  await restarted.reconcile({ sendMessage: async v => sent.push(v) }, other);
+  assert.equal(sent.length, 2);
+  await restarted.close();
+});
+
+test('legacy and connection mapping DELETE routes enforce authentication and return aggregate state', async t => {
+  const f = multiFixture(); const cleanup = await activate(f.context, { fetchImpl: f.fetchImpl }); t.after(cleanup);
+  const created = await f.routes.get('POST /connections')(request({ name: 'Other', token: 'two-token', enabled: false }));
+  const connectionId = created.body.connections[1].id;
+  const mapping = { id: 'same-route', chatId: '-1', topicId: null, chatType: 'group', agentId: 'hatchet', enabled: true };
+  f.settings.set('mappings', [mapping]); f.settings.set(`connection-${connectionId}-mappings`, [mapping]);
+  for (const path of ['DELETE /mappings/:id', 'DELETE /connections/:connectionId/mappings/:id']) {
+    const handler = f.routes.get(path); assert.equal(typeof handler, 'function');
+    const params = { connectionId, id: mapping.id };
+    assert.equal((await handler({ ...request(null, params), auth: { enabled: true, authenticated: false } })).status, 401);
+    const result = await handler(request(null, params)); assert.equal(result.status, 200); assert.equal(result.body.connections.length, 2);
+    if (path === 'DELETE /mappings/:id') { assert.equal(result.body.mappings.length, 0); assert.equal(result.body.connections[1].mappings.length, 1); }
+    else assert.equal(result.body.connections[1].mappings.length, 0);
+    assert.equal((await handler(request(null, params))).status, 404);
+  }
+  assert.equal((await f.routes.get('DELETE /connections/:connectionId/mappings/:id')(request(null, { connectionId: 'missing', id: mapping.id }))).status, 404);
+});

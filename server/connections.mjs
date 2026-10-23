@@ -185,11 +185,13 @@ export function createSwitchboardService(options = {}) {
     approveConnection: (id, routeId, input) => action(id, 'approve', [routeId, input]),
     denyConnection: (id, routeId) => action(id, 'deny', [routeId]),
     updateConnectionMapping: (id, routeId, input) => action(id, 'updateMapping', [routeId, input]),
+    deleteConnectionMapping: (id, routeId) => action(id, 'deleteMapping', [routeId]),
     configure: input => serialize(() => configure('default', input)),
     clearToken: () => serialize(() => clearToken('default')),
     approve: (id, input) => action('default', 'approve', [id, input]),
     deny: id => action('default', 'deny', [id]),
     updateMapping: (id, input) => action('default', 'updateMapping', [id, input]),
+    deleteMapping: id => action('default', 'deleteMapping', [id]),
     processMessage: (update, bot, id = 'default') => action(id, 'processMessage', [update, bot]),
     reconcile: (api, id = 'default') => action(id, 'reconcile', [api]),
   });

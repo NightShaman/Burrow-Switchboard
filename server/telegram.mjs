@@ -319,9 +319,24 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     approved[index] = { ...approved[index], agentId, enabled: value.enabled, updatedAt: nowIso(clock) };
     await write('mappings', approved); return publicState();
   }
+  async function deleteMapping(id) {
+    const approved = await mappings();
+    const mapping = approved.find(item => item.id === id);
+    if (!mapping) throw Object.assign(new Error('mapping_not_found'), { statusCode: 404 });
+    // Retain history, but never send a queued reply after this route is removed
+    // (including after restart or re-admission). Already sent messages are untouched.
+    const sameRoute = item => chatKey(item.chatId, item.topicId) === chatKey(mapping.chatId, mapping.topicId);
+    const recent = await deliveries();
+    await write('deliveries', recent.map(item => sameRoute(item) && item.direction === 'inbound' && !['delivered', 'failed', 'interrupted'].includes(item.status)
+      ? { ...item, status: 'interrupted', error: 'mapping_deleted', updatedAt: nowIso(clock) }
+      : item));
+    await write('pending-admissions', (await pending()).filter(item => item.id !== id));
+    await write('mappings', approved.filter(item => item.id !== id));
+    return publicState();
+  }
   function start() { if (!loopPromise) loopPromise = poll().catch(error => context.logger.error('Switchboard poller failed', publicError(error))); return loopPromise; }
   async function close() { pollGeneration += 1; controller.abort(new Error('service_shutdown')); wake(); await loopPromise; await queue; }
-  return Object.freeze({ start, close, publicState, configure: input => change(() => configure(input)), clearToken: () => change(clearToken), approve: (id, input) => serialize(() => approve(id, input)), deny: id => serialize(() => deny(id)), updateMapping: (id, input) => serialize(() => updateMapping(id, input)), processMessage: (update, bot) => serialize(() => processMessage(update, bot)), reconcile: api => serialize(() => reconcile(api)) });
+  return Object.freeze({ start, close, publicState, configure: input => change(() => configure(input)), clearToken: () => change(clearToken), approve: (id, input) => serialize(() => approve(id, input)), deny: id => serialize(() => deny(id)), updateMapping: (id, input) => serialize(() => updateMapping(id, input)), deleteMapping: id => serialize(() => deleteMapping(id)), processMessage: (update, bot) => serialize(() => processMessage(update, bot)), reconcile: api => serialize(() => reconcile(api)) });
 }
 
 export { createSwitchboardService } from './connections.mjs';

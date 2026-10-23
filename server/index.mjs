@@ -24,6 +24,7 @@ export async function activate(context, options = {}) {
   context.api.post('/pending/:id/approve', route(request => service.approve(String(request.params?.id || ''), request.body)));
   context.api.post('/pending/:id/deny', route(request => service.deny(String(request.params?.id || ''))));
   context.api.put('/mappings/:id', route(request => service.updateMapping(String(request.params?.id || ''), request.body)));
+  context.api.delete('/mappings/:id', route(request => service.deleteMapping(String(request.params?.id || ''))));
   const connectionId = request => String(request.params?.connectionId || '');
   context.api.post('/connections', route(request => service.createConnection(request.body)));
   context.api.put('/connections/:connectionId', route(request => service.configureConnection(connectionId(request), request.body)));
@@ -32,6 +33,7 @@ export async function activate(context, options = {}) {
   context.api.post('/connections/:connectionId/pending/:id/approve', route(request => service.approveConnection(connectionId(request), String(request.params?.id || ''), request.body)));
   context.api.post('/connections/:connectionId/pending/:id/deny', route(request => service.denyConnection(connectionId(request), String(request.params?.id || ''))));
   context.api.put('/connections/:connectionId/mappings/:id', route(request => service.updateConnectionMapping(connectionId(request), String(request.params?.id || ''), request.body)));
+  context.api.delete('/connections/:connectionId/mappings/:id', route(request => service.deleteConnectionMapping(connectionId(request), String(request.params?.id || ''))));
   service.start().catch(() => context.logger.error('Switchboard startup failed'));
 
   context.logger.info('Burrow Switchboard activated');

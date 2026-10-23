@@ -75,11 +75,23 @@ test('Pending admissions use the selected connection scoped routes', async () =>
   await selectConnection(root, 'alerts'); await byText(root, 'button', 'Deny').dispatchEvent({ type: 'click' }); await settle(); assert.ok(calls.some(call => call.path === '/connections/alerts/pending/pending-alerts/deny')); cleanup();
 });
 
-test('Mappings save through the selected connection without a deletion action', async () => {
-  const root = new FakeNode('div'); const calls = [];
+test('Mappings save and delete through the selected connection', async () => {
+  const root = new FakeNode('div'); const calls = []; const confirmations = [];
+  globalThis.confirm = value => { confirmations.push(value); return true; };
   const cleanup = mountSettings({ section: 'chat-mappings', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [{ id: 'hatchet', name: 'Hatchet' }, { id: 'smatchet', name: 'Smatchet' }], api: async (path, init = {}) => { calls.push({ path, init }); return config(); } }); await settle(); await selectConnection(root, 'alerts');
   const agent = byAttr(root, 'select', 'aria-label', 'Agent for Alerts Council'); const enabled = byAttr(root, 'input', 'aria-label', 'Enable Alerts Council'); agent.value = 'smatchet'; enabled.checked = false; await byText(root, 'button', 'Save').dispatchEvent({ type: 'click' }); await settle();
-  const update = calls.find(call => call.path === '/connections/alerts/mappings/map-alerts'); assert.equal(update.init.method, 'PUT'); assert.deepEqual(JSON.parse(update.init.body), { agentId: 'smatchet', enabled: false }); assert.equal(byText(root, 'button', 'Delete'), undefined); cleanup();
+  const update = calls.find(call => call.path === '/connections/alerts/mappings/map-alerts' && call.init.method === 'PUT'); assert.deepEqual(JSON.parse(update.init.body), { agentId: 'smatchet', enabled: false });
+  await selectConnection(root, 'alerts'); await byText(root, 'button', 'Delete').dispatchEvent({ type: 'click' }); await settle();
+  const remove = calls.find(call => call.path === '/connections/alerts/mappings/map-alerts' && call.init.method === 'DELETE'); assert.ok(remove); assert.equal(remove.init.body, undefined);
+  assert.match(confirmations.at(-1), /only this bot connection’s Switchboard mapping/); assert.match(confirmations.at(-1), /does not delete the Telegram chat or affect other bots/); assert.match(confirmations.at(-1), /Future messages will require readmission/); cleanup();
+});
+
+test('Mapping deletion stops when confirmation is cancelled', async () => {
+  globalThis.confirm = () => false;
+  const root = new FakeNode('div'); const calls = [];
+  const cleanup = mountSettings({ section: 'chat-mappings', primary: { replace: nodes => root.replaceChildren(nodes) }, agents: [{ id: 'hatchet', name: 'Hatchet' }], api: async (path, init = {}) => { calls.push({ path, init }); return config(); } }); await settle();
+  await byText(root, 'button', 'Delete').dispatchEvent({ type: 'click' }); await settle();
+  assert.equal(calls.some(call => call.init.method === 'DELETE'), false); cleanup();
 });
 
 test('Legacy top-level configuration remains the default connection and failed reads are retry-only', async () => {

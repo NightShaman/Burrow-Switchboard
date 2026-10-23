@@ -6,6 +6,32 @@ Documentation baseline: version **2026.10.22.1**, commit `b12d6cb2d9aae46542c55b
 
 The current implementation covers Telegram text messages only. Discord, attachments, streaming, durable user-level denial, manual replay and alternate transports are not delivered features. Do not infer them from the product name or adapter-oriented design.
 
+## Telegram groups and privacy mode
+
+Each bot connection needs its own approved chat/topic mapping. Two bots may share
+one Telegram group; their mappings, cursors, sessions and deliveries remain isolated.
+
+Telegram privacy mode is enabled by default. For an ordinary group member in that
+mode, a text `@mention` is not sufficient to make Telegram deliver the message to
+the bot. Use an explicitly addressed command such as `/start@ActualBotUsername`
+(no space) to initiate admission. A plain `/start` is not a broadcast to every bot.
+Telegram also delivers replies according to its privacy-mode routing rules.
+
+For mention-based interaction, either make each bot a group administrator, or
+disable privacy for each bot with BotFather `/setprivacy` and remove/re-add it to
+the group so that change takes effect. Switchboard still routes only messages
+containing the selected bot's mention entity or replies to that bot; ordinary
+unaddressed group chatter is ignored. Bots cannot receive messages from other
+bots, regardless of privacy mode. See the [Telegram Bots FAQ](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
+
+Deleting a chat mapping removes only the selected connection's route and matching
+pending admission. Other connections and Telegram group membership are untouched.
+Unsent replies for that route are marked interrupted and will not be sent after
+re-admission or restart; completed history is retained. A send already in progress
+can finish before deletion is processed. Future incoming messages require admission
+again. The scoped endpoint is `DELETE /connections/:connectionId/mappings/:id`;
+`DELETE /mappings/:id` targets the legacy default connection.
+
 ## Local checks
 
 Use Node.js 24 or newer in the Switchboard repository:
