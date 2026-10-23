@@ -1,7 +1,7 @@
 {
   "id": "burrow-switchboard",
   "name": "Switchboard",
-  "version": "2026.10.23.3",
+  "version": "2026.10.23.4",
   "server": "server/index.mjs",
   "ui": {
     "settings": "ui/settings.js"
