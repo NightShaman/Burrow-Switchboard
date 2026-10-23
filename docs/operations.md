@@ -10,13 +10,17 @@ For a nonempty answer, Switchboard writes an outbound `sending` record **before*
 
 Answers are sent as plain text without Telegram parse mode. The first chunk replies to the originating message where possible; subsequent chunks go to the same chat/topic without that reply reference.
 
+## Multiple connections
+
+Select the intended bot in every Settings section. Each worker has an independent cursor, credential, admissions and bounded delivery history. A failing or paused bot does not stop the other pollers. Token replacement is restricted to the same bot; add another connection for a different bot. Duplicate bots are rejected even when another connection is disabled or its credential was cleared, until that connection is removed.
+
 ## Polling behavior
 
 The poller obtains bot identity, reconciles existing turns, then requests new messages. Defaults are a 15-second Telegram long-poll timeout, 2-second disabled/missing-token wait and 3-second error retry wait. These are not hard end-to-end latency guarantees. New answers may wait for the current poll to finish before reconciliation.
 
 Disabling polling pauses both ingestion and reconciliation. Clearing the token additionally removes the secret. Existing Core turns are not canceled by those settings actions. Shutdown aborts network work and waits for the service loop/serialized queue to finish.
 
-State survives through host settings/secrets, but collections are bounded. The 200-record shared delivery limit can remove old records, including work still pending under enough traffic. Do not treat this initial implementation as an unbounded durable outbox or unlimited audit trail.
+State survives through host settings/secrets, but collections are bounded. The per-connection 200-record combined delivery limit can remove old records, including work still pending under enough traffic. Do not treat this initial implementation as an unbounded durable outbox or unlimited audit trail.
 
 ## Diagnose in order
 

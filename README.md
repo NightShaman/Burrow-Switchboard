@@ -9,7 +9,7 @@ Burrow Switchboard connects approved external chats to real Burrow agent session
 ## First slice
 
 - Telegram Bot API long polling—no public webhook or reverse-proxy requirement
-- Operator-owned, write-only bot token
+- Multiple named Telegram bot connections with independent polling, routing, sessions and write-only credentials
 - Unknown chats become pending admissions and cannot reach an agent
 - Each approved chat/topic maps to one enabled Burrow agent
 - Direct chats route every approved text message
@@ -23,7 +23,7 @@ Burrow Switchboard connects approved external chats to real Burrow agent session
 
 1. Create a Telegram bot with BotFather and copy its token.
 2. Install and enable Burrow Switchboard.
-3. Open **Settings → Switchboard → Configuration**, save the write-only token, and enable polling.
+3. Open **Settings → Switchboard → Configuration**, choose **Add bot connection**, name it, save its write-only token, and enable polling. Repeat for each bot.
 4. Send the bot a message from Telegram.
 5. Approve the pending chat and select the Burrow agent that should receive it.
 

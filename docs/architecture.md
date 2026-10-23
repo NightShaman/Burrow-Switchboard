@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-`server/index.mjs` activates one service, registers seven operator routes and returns an asynchronous cleanup function. `server/telegram.mjs` contains Telegram API transport, settings-backed state, routing/admission, polling and reply reconciliation. `ui/settings.js` implements the four host Settings sections.
+`server/index.mjs` activates one service, registers legacy and connection-scoped operator routes and returns an asynchronous cleanup function. `server/connections.mjs` owns the persisted registry, connection lifecycle and scoped stores. `server/telegram.mjs` contains Telegram API transport, settings-backed state, routing/admission, polling and reply reconciliation. `ui/settings.js` implements the four host Settings sections.
 
 ```text
 Telegram message update
@@ -36,6 +36,14 @@ The actual session string is bounded to 128 characters. `submit` returns an acce
 
 If submit/read are absent, valid routed input is recorded as failed with `core_external_agent_turns_unavailable`. Approval itself does not establish that Core turns are available.
 
+## Multiple bot connections
+
+Settings `connections` stores `{id, name, botId}` records, never credentials. The original `default` connection retains its original keys and Core identities in place; new UUID connections prefix every settings/secret key with `connection-<id>-`. Each runs its own abortable poller and serialized delivery queue. Registry/configuration mutations are serialized separately; one long poll does not block other bots.
+
+New connections use session `telegram:<connectionId>:<chatId>:<topicId-or-root>` and idempotency key `telegram-<connectionId>-update-<updateId>`. Default preserves the old forms shown above. Local route/delivery IDs can match across bots because their stores are isolated. Token validation binds a connection to a Telegram bot ID, rejects duplicate bots and prevents retained routes/replies moving to a different bot.
+
+Configuration invalidates network work before draining the worker queue and blocks new polling during persistence. Interrupted sends remain ambiguous and are not blindly retried. Already-sent provider work cannot be recalled, and Core turns are not canceled by disabling/removing a connection.
+
 ## Stored state
 
 | Host store key | Contents |
@@ -44,7 +52,7 @@ If submit/read are absent, valid routed input is recorded as failed with `core_e
 | Settings `transport-state` | Health, polling state, last poll time, sanitized error, Telegram offset and cached bot identity |
 | Settings `mappings` | Up to 250 approved chat/topic → agent mappings |
 | Settings `pending-admissions` | Up to 100 admission requests |
-| Settings `deliveries` | Up to 200 combined recent inbound/outbound records |
+| Settings `deliveries` | Up to 200 combined recent inbound/outbound records per connection |
 | Secret `telegram-bot-token` | Bot credential; never part of public state |
 
 Mapping IDs are the first 24 hex characters of SHA-256 over `telegram:<chatId>:<topicId-or-root>`. Inbound delivery IDs are `in:<updateId>`; outbound IDs are `out:<turnId>`.

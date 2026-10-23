@@ -14,5 +14,5 @@ test('current Core discovers and hosts Switchboard with external agent turns', a
   const activation=await host.activated; assert.equal(activation.tools.length,0); assert.ok(activation.some(item=>item.method==='GET'&&item.path==='/bootstrap'));
   const invoke=async(method,route,body=null,params={})=>{const entry=activation.find(item=>item.method===method&&item.path===route);assert.ok(entry,`${method} ${route}`);return host.invoke(entry.routeId,{auth:{enabled:false,authenticated:false},body,params,query:{},headers:{},method,path:route});};
   const bootstrap=await invoke('GET','/bootstrap'); assert.equal(bootstrap.body.coreAgentTurns.available,true); assert.equal(bootstrap.body.tokenConfigured,false);
-  const configured=await invoke('PUT','/configuration',{enabled:false,token:'secret'}); assert.equal(configured.body.tokenConfigured,true); assert.doesNotMatch(JSON.stringify(configured),/secret/);
+  const configured=await invoke('PUT','/configuration',{enabled:false}); assert.equal(configured.body.tokenConfigured,false); assert.equal(configured.body.connections[0].id,'default'); assert.ok(activation.some(item=>item.method==='DELETE'&&item.path==='/connections/:connectionId'));
 });

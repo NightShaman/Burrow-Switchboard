@@ -15,7 +15,7 @@ npm run build
 node --test test/server.test.mjs test/ui.test.mjs
 ```
 
-`build` is syntax checking for the two server modules and Settings UI; it is not bundling or a live provider test. Most service tests use fakes. However, the first server test activates the service without passing its fetch stub and can attempt a Telegram request with a literal dummy token. Treat the server suite as network-capable until that test-isolation gap is fixed; do not run it where external provider calls are forbidden. Never supply a real bot token to this suite.
+`build` is syntax checking for the server modules and Settings UI, not bundling or a live provider test. Service tests inject controlled fetch implementations, including activation; the Core smoke test configures a disabled connection without a token. Automated tests require no live Telegram credentials or provider calls.
 
 The Core contract test needs a current compatible Burrow-Backend checkout. By default it looks for the sibling checkout; set the explicit path when layouts differ:
 
@@ -48,6 +48,7 @@ A documentation push can therefore trigger the normal release workflow. Do not m
 | `burrow.mod.json` | Mod identity, version and four Settings registrations |
 | `package.json` | Node requirement and check commands |
 | `server/index.mjs` | Activation/cleanup, routes, operator-auth gate, response/error policy |
+| `server/connections.mjs` | Multi-bot registry, scoped stores, migration and connection lifecycle |
 | `server/telegram.mjs` | Telegram calls, admission, mapping keys, polling offsets, Core turns, delivery states, bounded persistence |
 | `ui/settings.js` | Actual operator controls, confirmation, snapshot loading, error presentation and disposal |
 | `test/server.test.mjs` | Server/service regression coverage |

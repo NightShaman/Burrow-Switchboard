@@ -15,8 +15,8 @@ function route(handler) {
   };
 }
 
-export async function activate(context) {
-  const service = createSwitchboardService({ context });
+export async function activate(context, options = {}) {
+  const service = createSwitchboardService({ ...options, context });
   context.api.get('/bootstrap', route(() => service.publicState()));
   context.api.get('/configuration', route(() => service.publicState()));
   context.api.put('/configuration', route(request => service.configure(request.body)));
@@ -24,7 +24,16 @@ export async function activate(context) {
   context.api.post('/pending/:id/approve', route(request => service.approve(String(request.params?.id || ''), request.body)));
   context.api.post('/pending/:id/deny', route(request => service.deny(String(request.params?.id || ''))));
   context.api.put('/mappings/:id', route(request => service.updateMapping(String(request.params?.id || ''), request.body)));
-  service.start();
+  const connectionId = request => String(request.params?.connectionId || '');
+  context.api.post('/connections', route(request => service.createConnection(request.body)));
+  context.api.put('/connections/:connectionId', route(request => service.configureConnection(connectionId(request), request.body)));
+  context.api.delete('/connections/:connectionId', route(request => service.removeConnection(connectionId(request))));
+  context.api.post('/connections/:connectionId/token/clear', route(request => service.clearConnectionToken(connectionId(request))));
+  context.api.post('/connections/:connectionId/pending/:id/approve', route(request => service.approveConnection(connectionId(request), String(request.params?.id || ''), request.body)));
+  context.api.post('/connections/:connectionId/pending/:id/deny', route(request => service.denyConnection(connectionId(request), String(request.params?.id || ''))));
+  context.api.put('/connections/:connectionId/mappings/:id', route(request => service.updateConnectionMapping(connectionId(request), String(request.params?.id || ''), request.body)));
+  service.start().catch(() => context.logger.error('Switchboard startup failed'));
+
   context.logger.info('Burrow Switchboard activated');
   return async () => { await service.close(); context.logger.info('Burrow Switchboard stopped'); };
 }

@@ -2,7 +2,7 @@
 
 ## Admission is per chat and topic
 
-The route identity combines Telegram chat ID and optional topic ID. A direct chat, a group's root route and each forum topic have distinct keys. The displayed title is descriptive metadata, not the identity or a security boundary.
+Within each bot connection, the route identity combines Telegram chat ID and optional topic ID. Admissions, mappings and limits are independent across connections. A direct chat, a group's root route and each forum topic have distinct keys. The displayed title is descriptive metadata, not the identity or a security boundary.
 
 A nonempty text message from an unknown route creates or refreshes a pending entry with chat/topic information, requester identity and request time. No Core turn is submitted. Pending admission is bounded to 100 entries; it is not a permanent request archive.
 
@@ -27,7 +27,7 @@ Messages receive a short Telegram sender/chat prefix before Core submission. Thi
 
 ## Sessions and agent changes
 
-Each route uses session ID `telegram:<chatId>:<topicId-or-root>` (bounded to 128 characters). All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
+The migrated default connection keeps session ID `telegram:<chatId>:<topicId-or-root>`. New connections use `telegram:<connectionId>:<chatId>:<topicId-or-root>` so different bots do not share history. All participants in an approved group/topic share that route's session for the selected agent. Switchboard does not create a private session per participant.
 
 In **Chat Mappings**, select an enabled agent and save to redirect subsequent messages. The route-derived session ID does not change when the agent selection changes. Do not describe this as a conversation wipe or a migration of one agent's history into another; session/history handling belongs to Core.
 
@@ -35,6 +35,6 @@ Uncheck **Enabled** and save to stop new messages on that route. The mapping rem
 
 ## Limits and duplicate handling
 
-There are at most 250 stored mappings, 100 pending admissions and 200 recent delivery records (inbound and outbound together). New entries can evict older ones. These bounded settings collections are not an unlimited queue or audit ledger.
+Per connection, there are at most 250 stored mappings, 100 pending admissions and 200 recent delivery records (inbound and outbound together). New entries can evict older ones. These bounded settings collections are not an unlimited queue or audit ledger.
 
-Every accepted Telegram update uses Core idempotency key `telegram-update-<update_id>`. Polling persists the next Telegram offset after processing an update. Core owns the durable idempotency contract; Switchboard also records inbound turns and outbound outcomes. This is duplicate suppression, not an unconditional exactly-once delivery guarantee. See [operations](operations.md#delivery-states-and-uncertain-outcomes).
+The default connection preserves Core idempotency key `telegram-update-<update_id>`; new connections use `telegram-<connectionId>-update-<update_id>` to prevent cross-bot collisions. Polling persists the next Telegram offset after processing an update. Core owns the durable idempotency contract; Switchboard also records inbound turns and outbound outcomes. This is duplicate suppression, not an unconditional exactly-once delivery guarantee. See [operations](operations.md#delivery-states-and-uncertain-outcomes).

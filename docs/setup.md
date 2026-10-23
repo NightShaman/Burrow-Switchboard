@@ -10,8 +10,8 @@ Keep the token secret. Do not paste it into chat, screenshots, logs, shell comma
 
 1. Create your bot through Telegram's BotFather and retain the token securely.
 2. Install and enable the Switchboard mod using Burrow's normal mod workflow. Its manifest ID is `burrow-switchboard`; its Settings navigation label is **Switchboard**.
-3. Open **Settings → Switchboard → Configuration**. Paste the token into the password field, enable Telegram polling, and save.
-4. Open **Status**. Confirm the bot identity, healthy/active transport, and available Core agent turns. Status is a snapshot: revisit the section to refresh it.
+3. Open **Settings → Switchboard → Configuration**. Choose **Add bot connection**, enter a name and token, enable polling, and save. For an existing migrated connection, select it and save its token.
+4. Open **Status** and select that bot connection. Confirm the bot identity, healthy/active transport, and available Core agent turns. Status is a snapshot: revisit the section to refresh it.
 5. Send a nonempty text message to the bot in Telegram. This creates a pending admission; it does **not** run the agent.
 6. Open **Pending Admissions**, verify the chat/requester information, choose an enabled agent, and approve.
 7. **Send a fresh text message.** The message that requested admission is not saved for replay. The new message should create an inbound delivery, then a reply after the Core turn completes.
@@ -32,3 +32,7 @@ Use an agent with limited capabilities and a harmless prompt such as “Reply wi
 ## Pause or remove the token
 
 Uncheck polling and save to pause ingestion **and reply reconciliation** while retaining the token and records. To remove the stored token, use **Clear configured token** and confirm. Clearing also disables polling, but does not delete mappings or delivery state. Neither action is a documented cancellation of Core turns already submitted.
+
+## Add more bots
+
+Repeat **Configuration → Add bot connection** for each BotFather bot. Each has its own credential, poll cursor, admissions, mappings, delivery records and Core sessions. Select the intended bot before approving its pending chat. The same Telegram chat/topic can route independently through different bots without sharing a conversation or idempotency key. Removing or pausing one connection does not stop the others.

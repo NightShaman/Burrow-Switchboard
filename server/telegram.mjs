@@ -89,12 +89,18 @@ export function createTelegramApi({ token, fetchImpl = fetch }) {
   });
 }
 
-export function createSwitchboardService({ context, fetchImpl = fetch, clock = Date.now, pollTimeoutSeconds = 15, idleDelayMs = 2_000, retryDelayMs = 3_000 } = {}) {
+export function createTelegramConnection({ context, connectionId = 'default', fetchImpl = fetch, clock = Date.now, pollTimeoutSeconds = 15, idleDelayMs = 2_000, retryDelayMs = 3_000 } = {}) {
   if (!context?.settings || !context?.secrets || !context?.agents) throw new Error('switchboard_context_required');
   const controller = new AbortController();
   let loopPromise = null;
   let wakeResolve = null;
   let pollGeneration = 0;
+  let pollController = null;
+  let changing = 0;
+  function change(operation) {
+    changing += 1; pollGeneration += 1; pollController?.abort(); wake();
+    return serialize(operation).finally(() => { changing -= 1; wake(); });
+  }
   let queue = Promise.resolve();
   const serialize = operation => {
     const result = queue.then(operation, operation);
@@ -177,15 +183,16 @@ export function createSwitchboardService({ context, fetchImpl = fetch, clock = D
     if (!cleanText) return;
     const accepted = await context.agents.turns.submit({
       agentId: mapping.agentId,
-      sessionId: sessionIdFor(mapping),
+      sessionId: connectionId === 'default' ? sessionIdFor(mapping) : `telegram:${connectionId}:${mapping.chatId}:${mapping.topicId ?? 'root'}`,
       message: telegramPrompt({ ...message, text: cleanText }, mapping),
-      idempotencyKey: `telegram-update-${update.update_id}`,
+      idempotencyKey: connectionId === 'default' ? `telegram-update-${update.update_id}` : `telegram-${connectionId}-update-${update.update_id}`,
     });
     await replaceDelivery({ id: `in:${update.update_id}`, direction: 'inbound', updateId: update.update_id, telegramMessageId: message.message_id, chatId: mapping.chatId, topicId: mapping.topicId, chatTitle: mapping.chatTitle, chatType: mapping.chatType, agentId: mapping.agentId, turnId: accepted.turn.id, status: TERMINAL_TURNS.has(accepted.turn.status) ? accepted.turn.status : 'processing', at: nowIso(clock) });
   }
-  async function reconcile(api) {
+  async function reconcile(api, signal = controller.signal) {
     const list = await deliveries();
     for (const item of [...list].reverse()) {
+      signal.throwIfAborted();
       if (item.direction === 'outbound' && item.status === 'sending') {
         await replaceDelivery({ ...item, status: 'unknown', error: 'telegram_delivery_outcome_unknown' });
         continue;
@@ -206,44 +213,50 @@ export function createSwitchboardService({ context, fetchImpl = fetch, clock = D
       try {
         let first = true;
         for (const part of chunks(answer)) {
-          await api.sendMessage({ chatId: item.chatId, topicId: item.topicId, text: part, replyToMessageId: first ? item.telegramMessageId : null, signal: controller.signal });
+          signal.throwIfAborted();
+          await api.sendMessage({ chatId: item.chatId, topicId: item.topicId, text: part, replyToMessageId: first ? item.telegramMessageId : null, signal });
           first = false;
         }
         await replaceDelivery({ id: outboundId, status: 'delivered', error: null });
         await replaceDelivery({ ...item, status: 'delivered' });
       } catch (error) {
-        if (controller.signal.aborted) throw error;
+        if (signal.aborted) throw error;
         await replaceDelivery({ id: outboundId, status: 'unknown', error: publicError(error) });
       }
     }
   }
   async function currentPoll(generation, token) {
-    if (controller.signal.aborted || generation !== pollGeneration) return false;
+    if (controller.signal.aborted || changing || generation !== pollGeneration) return false;
     const [config, savedToken] = await Promise.all([configuration(), context.secrets.get('telegram-bot-token')]);
-    return config.enabled === true && savedToken === token;
+    return !controller.signal.aborted && !changing && generation === pollGeneration && config.enabled === true && savedToken === token;
   }
   async function poll() {
     while (!controller.signal.aborted) {
+      if (changing) { await wait(idleDelayMs); continue; }
+      const generation = pollGeneration;
       const config = await configuration(); const token = await context.secrets.get('telegram-bot-token');
       if (!config.enabled || !token) {
         await serialize(async () => write('transport-state', { ...(await transport()), health: config.enabled && !token ? 'degraded' : 'stopped', polling: 'stopped', error: config.enabled && !token ? 'telegram_token_missing' : null }));
         await wait(idleDelayMs); continue;
       }
-      const generation = pollGeneration;
+      if (changing || generation !== pollGeneration) continue;
+      pollController = new AbortController();
+      const signal = AbortSignal.any([controller.signal, pollController.signal]);
       const api = createTelegramApi({ token, fetchImpl });
       try {
         let state = await transport();
         let bot = state.bot;
         if (!bot) {
-          const identity = await api.getMe({ signal: controller.signal });
+          const identity = await api.getMe({ signal });
           if (!(await currentPoll(generation, token))) continue;
           bot = { id: String(identity.id), username: identity.username || null, displayName: [identity.first_name, identity.last_name].filter(Boolean).join(' ') || null };
           state = { ...state, bot };
+          await serialize(async () => { if (await currentPoll(generation, token)) await write('transport-state', { ...(await transport()), bot }); });
         }
         if (!(await currentPoll(generation, token))) continue;
-        await serialize(async () => { if (await currentPoll(generation, token)) await reconcile(api); });
+        await serialize(async () => { if (await currentPoll(generation, token)) await reconcile(api, signal); });
         if (!(await currentPoll(generation, token))) continue;
-        const updates = await api.getUpdates({ offset: Number(state.offset) || 0, timeout: pollTimeoutSeconds, signal: controller.signal });
+        const updates = await api.getUpdates({ offset: Number(state.offset) || 0, timeout: pollTimeoutSeconds, signal });
         for (const update of Array.isArray(updates) ? updates : []) {
           const accepted = await serialize(async () => {
             if (!(await currentPoll(generation, token))) return false;
@@ -264,17 +277,15 @@ export function createSwitchboardService({ context, fetchImpl = fetch, clock = D
     }
   }
   async function configure(input) {
-    const value = exactObject(input, ['enabled', 'token'], 'configuration_invalid');
+    const value = exactObject(input, ['enabled', 'token', 'bot'], 'configuration_invalid');
     if (typeof value.enabled !== 'boolean') throw Object.assign(new Error('configuration_invalid'), { statusCode: 400 });
-    pollGeneration += 1;
     if (value.token !== undefined) await context.secrets.set('telegram-bot-token', boundedString(value.token, 4096, 'telegram_token_invalid'));
     await write('configuration', { enabled: value.enabled });
     const state = await transport();
-    await write('transport-state', { ...state, ...(value.token !== undefined ? { bot: null } : {}), health: value.enabled ? 'unknown' : 'stopped', polling: value.enabled ? 'starting' : 'stopped', error: null });
+    await write('transport-state', { ...state, ...(value.token !== undefined ? { bot: value.bot || null } : {}), health: value.enabled ? 'unknown' : 'stopped', polling: value.enabled ? 'starting' : 'stopped', error: null });
     wake(); return publicState();
   }
   async function clearToken() {
-    pollGeneration += 1;
     await context.secrets.clear('telegram-bot-token');
     await write('configuration', { enabled: false });
     await write('transport-state', { ...(await transport()), bot: null, health: 'stopped', polling: 'stopped', error: null });
@@ -310,5 +321,7 @@ export function createSwitchboardService({ context, fetchImpl = fetch, clock = D
   }
   function start() { if (!loopPromise) loopPromise = poll().catch(error => context.logger.error('Switchboard poller failed', publicError(error))); return loopPromise; }
   async function close() { pollGeneration += 1; controller.abort(new Error('service_shutdown')); wake(); await loopPromise; await queue; }
-  return Object.freeze({ start, close, publicState: () => serialize(publicState), configure: input => serialize(() => configure(input)), clearToken: () => serialize(clearToken), approve: (id, input) => serialize(() => approve(id, input)), deny: id => serialize(() => deny(id)), updateMapping: (id, input) => serialize(() => updateMapping(id, input)), processMessage: (update, bot) => serialize(() => processMessage(update, bot)), reconcile: api => serialize(() => reconcile(api)) });
+  return Object.freeze({ start, close, publicState, configure: input => change(() => configure(input)), clearToken: () => change(clearToken), approve: (id, input) => serialize(() => approve(id, input)), deny: id => serialize(() => deny(id)), updateMapping: (id, input) => serialize(() => updateMapping(id, input)), processMessage: (update, bot) => serialize(() => processMessage(update, bot)), reconcile: api => serialize(() => reconcile(api)) });
 }
+
+export { createSwitchboardService } from './connections.mjs';

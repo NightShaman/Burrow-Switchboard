@@ -5,18 +5,22 @@ Switchboard registers four Settings sections under its manifest ID `burrow-switc
 | Section | Purpose |
 | --- | --- |
 | **Status** (`status`) | Primary page: transport, bot identity, Core capability, mappings, pending admissions and recent deliveries |
-| **Configuration** (`configuration`) | Enable/disable polling, replace or clear the bot token |
+| **Configuration** (`configuration`) | Add, select, rename, pause or remove named bot connections |
 | **Pending Admissions** (`pending-admissions`) | Choose an enabled agent and approve a request, or deny it |
 | **Chat Mappings** (`chat-mappings`) | Change the selected agent or enable/disable an existing route |
 
 ## Configuration
 
-- **Enable Telegram polling:** defaults to off. Enabling without a token produces `telegram_token_missing` and a stopped/degraded transport.
-- **Telegram bot token:** password input. Leaving it blank when saving preserves the current token. Entering a new value replaces it; the API rejects an empty supplied token. The token is never returned in public state.
-- **Save configuration:** persists the checkbox and any nonblank replacement token.
-- **Clear configured token:** confirmation-protected action; clears the secret and disables polling.
+Every section has a **Bot connection** selector. Selection persists across sections; diagnostics, approvals, mappings and deliveries always belong to that selected bot.
 
-Replacing or clearing the token resets cached bot identity, **not** the saved offset, mappings or deliveries. Do not treat token replacement with a different bot as a clean installation. There is no reset-state control in this UI.
+- **Add bot connection:** enter a name (up to 80 characters), token and polling toggle. Save validates the token with Telegram before creating the connection. Each bot can belong to only one connection.
+- **Connection name:** rename without changing routing or history.
+- **Enable Telegram polling:** enables only this bot. Disabling pauses ingestion and reply reconciliation; other bots continue independently.
+- **Bot token:** write-only password input. Blank preserves the saved secret. A supplied token must be nonempty, at most 4,096 characters. Rotating a token is allowed only for the same Telegram bot; add a new connection for a different bot.
+- **Clear configured token:** confirmation-protected; removes only this connection's credential and disables it. Its bot binding, offset, mappings and deliveries remain.
+- **Remove connection:** confirmation-protected; stops this worker and permanently deletes its credential, admissions, mappings and delivery state. It does not delete Core conversations or cancel submitted Core turns.
+
+Existing installations appear as the **Telegram** connection (`default`), preserving the credential, routes, offset, history and Core session identity without copying secrets.
 
 Polling timeouts, retry intervals, Telegram endpoint, delivery limits and message chunk size are implementation constants/defaults, not operator settings.
 
