@@ -11,7 +11,7 @@
       {
         "id": "status",
         "navigation": {
-          "title": "Switchboard",
+          "title": "Status",
           "description": "Monitor Telegram transport health, routing, and recent delivery state."
         },
         "primary": {
@@ -23,7 +23,7 @@
       {
         "id": "configuration",
         "navigation": {
-          "title": "Switchboard",
+          "title": "Configuration",
           "description": "Connect external chat transports to selected Burrow agents."
         },
         "primary": {
