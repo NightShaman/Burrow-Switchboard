@@ -7,7 +7,7 @@ Switchboard registers four Settings sections under its manifest ID `burrow-switc
 | **Status** (`status`) | Primary page: transport, bot identity, Core capability, mappings, pending admissions and recent deliveries |
 | **Configuration** (`configuration`) | Add, select, rename, pause or remove named bot connections |
 | **Pending Admissions** (`pending-admissions`) | Choose an enabled agent and approve a request, or deny it |
-| **Chat Mappings** (`chat-mappings`) | Change the selected agent or enable/disable an existing route |
+| **Chat Mappings** (`chat-mappings`) | Change the selected agent, enable/disable, or delete an existing route |
 
 ## Configuration
 
@@ -35,3 +35,4 @@ The UI loads on mount and after mutations; it has **no periodic auto-refresh**. 
 ## Access control
 
 The mod API rejects unauthenticated requests when the host reports authentication enabled. When host authentication is disabled, the mod does not independently require a login. Protect the Burrow operator interface using the host's access controls; write-only tokens do not make an exposed settings endpoint safe.
+

@@ -2,9 +2,11 @@
 
 ## Baseline and scope
 
+Current review: source **2026.10.24.2**, commit `02f490a9357e8f92289d466a04b904907de430ea`, inspected **2026-10-24**. This documentation maintenance pass inspected source without executing application tests or contacting either provider.
+
 Historical Telegram-only documentation baseline: version **2026.10.22.1**, commit `b12d6cb2d9aae46542c55b4da12f605ee8009b34`, reviewed **2026-10-22**. This is archival history, not the current scope or live verification. Compare installed source behavior and host capabilities, not dates alone.
 
-The current implementation covers Telegram and Discord text messages. Attachments, slash commands, voice, streaming, durable user-level denial, manual replay and other transports are not delivered features. Do not infer them from the product name or adapter-oriented design.
+The current implementation covers Telegram and Discord text messages. Discord native `/help`, `/status`, `/stop`, `/new` and `/model` commands are implemented; see [Discord setup](discord.md#native-slash-commands) for Core prerequisites. Attachments, voice, streaming, durable user-level denial, manual replay and other transports are not delivered features. Do not infer them from the product name or adapter-oriented design.
 
 ## Telegram groups and privacy mode
 
@@ -82,7 +84,7 @@ A documentation push can therefore trigger the normal release workflow. Do not m
 | `server/discord.mjs` | Discord Gateway/REST, channel/thread admission, delivery reconciliation and guild-channel context |
 | `ui/settings.js` | Actual operator controls, confirmation, snapshot loading, error presentation and disposal |
 | `test/server.test.mjs` | Server/service regression coverage |
-| `test/discord.test.mjs` | Discord transport and room-context regression coverage |
+| `test/discord.test.mjs` | Discord transport, room-context and native-command regression coverage |
 | `test/ui.test.mjs` | Fake-DOM Settings regression coverage |
 | `test/core-contract.test.mjs` | Real-Core integration contract |
 | `.github/workflows/release.yml` | CI and automatic development release behavior |
@@ -93,3 +95,4 @@ The hero in `docs/assets/hero.png` is the user-selected joint-effort Snickerdink
 ## Publication history
 
 The earlier pre-publication reconciliation at `056f0749542e92cfe6b2346b6ef7c6f268b5e4e7` (version **2026.10.22.2**) concerned the Telegram-only baseline and hero image. It does not describe the subsequent Discord implementation. This documentation update does not claim a live provider test or alter runtime/release policy.
+

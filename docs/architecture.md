@@ -19,7 +19,7 @@ Telegram message update
   → delivered or unknown
 ```
 
-Switchboard does not directly call a model provider or run a parallel tool loop. It submits a real agent turn to Core. Telegram and Discord are implemented behind separate workers with a shared connection registry; neither requires a new Core capability or Tutor integration.
+Switchboard does not directly call a model provider or run a parallel tool loop. It submits a real agent turn to Core. Telegram and Discord are implemented behind separate workers with a shared connection registry; ordinary message routing uses the existing external-turn contract and neither transport requires Tutor integration. Discord commands additionally require the Core APIs listed below.
 
 ## Host capabilities
 
@@ -39,6 +39,10 @@ The example shows the migrated Telegram default. New Telegram connections prefix
 
 If submit/read are absent, valid routed input is recorded as failed with `core_external_agent_turns_unavailable`. Approval itself does not establish that Core turns are available.
 
+### Additional Discord command capabilities
+
+`/stop` needs `context.agents.turns.cancel`. `/new` needs `context.agents.sessions.create`; `/model` needs `context.agents.sessions.model`, `setModel`, and `context.models.list` for choices. `/new` persists the returned owned session ID and a history boundary on the mapping. Ordinary messaging still uses submit/read; command availability must not be inferred from the Core turns indicator. See [commands](discord.md#native-slash-commands).
+
 ## Multiple bot connections
 
 Settings `connections` stores `{id, name, transport, botId}` records (`transport` is `telegram` or `discord`; absent legacy values mean `telegram`), never credentials. The original `default` connection retains its original keys and Core identities in place; new UUID connections prefix every settings/secret key with `connection-<id>-`. Each runs its own abortable Telegram poller or Discord Gateway worker and serialized delivery queue. Transport is immutable after creation. Registry/configuration mutations are serialized separately; one long poll does not block other bots.
@@ -53,9 +57,10 @@ Configuration invalidates network work before draining the worker queue and bloc
 | --- | --- |
 | Settings `configuration` | Telegram polling or Discord gateway enabled flag |
 | Settings `transport-state` | Health, polling state, last poll time, sanitized error, cached bot identity, and provider-specific cursor/gateway state |
-| Settings `mappings` | Up to 250 approved chat/topic or channel/thread → agent mappings |
+| Settings `mappings` | Up to 250 approved chat/topic or channel/thread → agent mappings; Discord may include an owned `sessionId` and `historyAfter` boundary |
 | Settings `pending-admissions` | Up to 100 admission requests |
-| Settings `deliveries` | Up to 200 combined recent inbound/outbound records per connection |
+| Settings `deliveries` | Up to 200 combined inbound/outbound records per connection; Discord also enforces a 4,000,000-byte bound and protects unresolved/unknown records from eviction |
+| Settings `command-interactions` (Discord connection-scoped) | Up to 200 recent command IDs/statuses; no interaction tokens |
 | Settings `telegram-room-history` (mod-wide, not connection-prefixed) | Up to 100 chat/topic rooms, 50 messages each, 512,000 UTF-8 JSON bytes total; see [routing](routing.md#shared-group-and-channel-conversation-context) |
 | Settings `discord-room-history` (mod-wide) | Bounded guild/channel history shared across approved Discord bots; thread IDs are separate rooms; DMs connection-isolated |
 | Secret `telegram-bot-token` or `discord-bot-token` (connection-scoped) | Provider bot credential; never part of public state |
@@ -89,8 +94,9 @@ not merely Core success. Failed/unknown sends do not manufacture room text. A cr
 between provider acknowledgment and history persistence can leave a visible message
 absent from bounded context; no blind resend is attempted.
 
-No new Core capability or Tutor integration is needed: existing settings
-persistence and external-turn submission carry the context. Full submissions are
+Shared room context needs no new Core capability or Tutor integration: existing settings
+persistence and external-turn submission carry the context. This does not remove the additional Core prerequisites for Discord session commands. Full submissions are
 frozen before Core submission and reused if acceptance is uncertain. They are
 never exposed in public delivery diagnostics. Shared context never invokes a peer
 agent, so no automatic bot-to-bot wake loop is introduced.
+

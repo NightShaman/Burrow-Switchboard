@@ -2,7 +2,7 @@
 
 ## Delivery states and uncertain outcomes
 
-An inbound record tracks a Core turn. It can be `processing`, `succeeded`, `failed`, `interrupted` or `delivered`. `succeeded` means Core finished successfully; it is not synonymous with provider delivery. An empty answer yields no outbound message.
+An inbound record tracks a Core turn. It can be `submitting`, `processing`, `succeeded`, `failed`, `interrupted` or `delivered`. `succeeded` means Core finished successfully; it is not synonymous with provider delivery. An empty answer yields no outbound message.
 
 For a nonempty answer, Switchboard writes an outbound `sending` record **before** calling the provider. Successful sends mark inbound and outbound records `delivered`. A send error produces outbound `unknown`, because a failed response does not establish that the provider received nothing. A `sending` record encountered during later reconciliation becomes `unknown` too.
 
@@ -22,7 +22,7 @@ The Discord worker validates bot identity, connects to the outbound Gateway WebS
 
 Disabling polling/the gateway pauses both ingestion and reconciliation. Clearing the token additionally removes the secret. Existing Core turns are not canceled by those settings actions. Shutdown aborts network work and waits for the service loop/serialized queue to finish.
 
-State survives through host settings/secrets, but collections are bounded. The per-connection 200-record combined delivery limit can remove old records, including work still pending under enough traffic. Do not treat this initial implementation as an unbounded durable outbox or unlimited audit trail.
+State survives through host settings/secrets, but collections are bounded. The per-connection 200-record combined delivery limit can remove old Telegram records, including work still pending under enough traffic. Discord protects unresolved and unknown deliveries from eviction and reports `discord_backlog_full` when no completed non-unknown record can be removed; a 4,000,000-byte delivery-state ceiling also applies. Do not treat this initial implementation as an unbounded durable outbox or unlimited audit trail.
 
 ## Group, channel and thread quick checks
 
@@ -44,6 +44,8 @@ For Discord, check each bot's Message Content intent, View Channels, Send Messag
 | `discord_gateway_intents_disallowed` / `discord_gateway_auth_failed` | Enable Message Content in the Discord application or check token; inspect connection health after reconnect |
 | `discord_token_missing` / `discord_auth_failed` / `discord_token_validation_failed` | Check the selected bot's write-only credential privately |
 | `discord_rate_limited` / `discord_gateway_unavailable` / `discord_request_failed` | Check outbound network/Discord availability and allow retry/reconnect; do not expose credentials |
+| `discord_backlog_full` | Review unresolved/unknown deliveries and Core progress; no automatic reset/replay operation is provided. Do not clear state or resubmit work blindly |
+| Discord command says upgrade or fails | Verify the command-specific Core APIs, not just the submit/read indicator; see [Discord commands](discord.md#native-slash-commands) |
 | Inbound `processing` persists | Inspect the corresponding agent/Core turn; a read failure is retried by later reconciliation without a new per-delivery diagnostic |
 | Inbound `failed` / `interrupted` | Investigate Core execution rather than assuming the provider transport is responsible |
 | Inbound `succeeded`, no message | Check for empty answer or an outbound `unknown`; success is not proof of delivery |
@@ -54,3 +56,4 @@ For Discord, check each bot's Message Content intent, View Channels, Send Messag
 ## A useful support report
 
 Include installed mod/Core versions, redacted transport health/error, relevant chat type and topic presence, approximate timestamps, delivery direction/status and Core turn ID if appropriate. Explain whether a fresh message was sent after approval. Remove token values, token-bearing URLs, personal chat content and unnecessary requester identifiers. There is no need to expose a private source repository in a public report.
+

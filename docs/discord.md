@@ -2,9 +2,9 @@
 
 ## Prerequisites and least privilege
 
-Install and enable Switchboard, use an enabled limited-capability Burrow agent, and confirm Core exposes `context.agents.turns.submit` and `context.agents.turns.read`. Use **one Discord application/bot per goblin** (and one named Discord connection per bot); do not reuse a token across connections. In the [Discord Developer Portal](https://discord.com/developers/applications), create each application, add its bot, securely retain its bot token, and enable the **Message Content privileged intent** for each bot. Switchboard needs actual text content for admission and turns. Do not paste tokens into chats, logs or support reports.
+Install and enable Switchboard, use an enabled limited-capability Burrow agent, and confirm Core exposes `context.agents.turns.submit` and `context.agents.turns.read`. Use **one Discord application/bot per goblin** (and one named Discord connection per bot); do not reuse a token across connections. In the [Discord Developer Portal](https://discord.com/developers/applications), create each application, add its bot, securely retain its bot token, and enable the **Message Content privileged intent** for each bot. Switchboard needs actual text content for admission and turns. Do not paste tokens into chats, logs or support reports. See [Discord’s Message Content intent requirements](https://docs.discord.com/developers/events/gateway#message-content-intent).
 
-Generate a bot invite for the intended server with **View Channels**, **Send Messages**, **Read Message History**, and **Send Messages in Threads**. Do not grant Administrator merely for Switchboard. Allow each bot to see/read and post in the specific channel and thread you intend to use. For a **private thread**, explicitly add/invite each bot as a thread member: parent-channel permissions alone do not imply thread membership. Server/channel permission overwrites still apply. Switchboard does not set Discord intents or permissions for you.
+Generate a bot invite for the intended server with **View Channels**, **Send Messages**, **Read Message History**, and **Send Messages in Threads**. Do not grant Administrator merely for Switchboard. Allow each bot to see/read and post in the specific channel and thread you intend to use. For a **private thread**, explicitly add/invite each bot as a thread member: parent-channel permissions alone do not imply thread membership. Server/channel permission overwrites still apply. Switchboard does not set Discord intents or permissions for you. See [Discord thread permissions](https://docs.discord.com/developers/topics/threads#permissions).
 
 Switchboard connects outward to Discord's Gateway (WebSocket) and REST API; it does **not** register an inbound interaction/webhook URL or require an inbound reverse proxy. It handles text messages and native slash commands, not attachments, voice or streaming.
 
@@ -31,8 +31,8 @@ If nothing appears, confirm bot identity and gateway health, the Message Content
 Switchboard registers `/help`, `/status`, `/stop`, `/new`, and `/model` with Discord
 when its bot connects. Registration uses individual command upserts, not bulk
 replacement: unrelated application commands are retained. Same-name chat-input
-commands belong to Switchboard. Install the bot with the `applications.commands`
-scope as well as `bot`; global commands may take time to propagate. If registration
+commands belong to Switchboard. Discord automatically includes `applications.commands` with the `bot` scope;
+global commands may take time to propagate. See [application-command authorization](https://docs.discord.com/developers/interactions/application-commands#authorizing-your-application). If registration
 fails, messaging stays available and registration is retried on reconnect.
 
 Commands only operate in an approved, enabled channel/thread/DM mapping. `/help`
@@ -53,11 +53,11 @@ Replies are ephemeral and mentions are suppressed. Commands never generate LLM p
 
 **Release compatibility:** deploy Core's external agent cancellation, owner-bound
 session creation/model read/model write, and safe `context.models.list()` APIs
-**before deploying this Switchboard release**. Older Core retains ordinary messaging,
-while unsupported commands explain the upgrade requirement. Interaction tokens are
+**before deploying this Switchboard release**. Core with compatible submit/read retains ordinary messaging. Missing command methods produce upgrade guidance; a capability failure can instead produce the generic command-failed response. Do not use the turns indicator as proof that every command is supported. Interaction tokens are
 transient REST credentials: never stored in settings, delivery records, or public state.
 Initial deferrals are sent outside the serialized message queue; failed acknowledgments
 perform no command side effects. Completed interaction IDs are durably deduplicated
 within a bounded recent ledger (200 records); in-memory acknowledgments are bounded
 at 500 IDs. A process failure after deferral can leave the ephemeral reply unfinished;
 `/new` retries use Core idempotency, not a second fresh session.
+

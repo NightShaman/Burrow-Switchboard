@@ -15,7 +15,8 @@ Burrow Switchboard connects approved external chats to real Burrow agent session
 - Approved group/topic or guild/channel context is durable, bounded and shared across approved bots; observing other messages never automatically wakes an agent
 - Core executes ordinary agent turns with normal SOUL, tools, continuity and session serialization; answers return asynchronously
 - Delivery records and duplicate suppression are bounded; ambiguous outbound sends are not blindly resent
-- Text-only baseline: no attachments, slash commands, voice or streaming
+- Native Discord `/help`, `/status`, `/stop`, `/new` and `/model`; command-specific Core compatibility is described in [Discord setup](docs/discord.md#native-slash-commands)
+- No attachments, voice or streaming; Telegram does not implement native command handling
 
 ## Setup
 
@@ -40,3 +41,4 @@ Switchboard is distributed under the [Burrow Sustainable Use License](LICENSE).
 ## Documentation
 
 Start with the [Switchboard guide](docs/index.md) for operator setup, admission and routing, Settings, delivery troubleshooting, architecture, the mod-local API and development checks. These pages describe the implemented Telegram and Discord text transports and their distinct delivery boundaries.
+
