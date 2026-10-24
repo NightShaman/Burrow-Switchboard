@@ -9,50 +9,22 @@
   "contributions": {
     "settings": [
       {
-        "id": "status",
+        "id": "bots",
         "navigation": {
-          "title": "Status",
-          "description": "Monitor Telegram or Discord transport health, routing, and recent delivery state."
+          "title": "Bots"
         },
         "primary": {
-          "title": "Status",
-          "description": "Review bot transport, Core availability, admissions, mappings, and bounded delivery diagnostics.",
+          "title": "Bots",
           "capability": "settingsUi"
         }
       },
       {
-        "id": "configuration",
+        "id": "diagnostics",
         "navigation": {
-          "title": "Configuration",
-          "description": "Connect external chat transports to selected Burrow agents."
+          "title": "Diagnostics"
         },
         "primary": {
-          "title": "Configuration",
-          "description": "Configure Telegram or Discord bot connections and transport lifecycle.",
-          "capability": "settingsUi"
-        }
-      },
-      {
-        "id": "pending-admissions",
-        "navigation": {
-          "title": "Pending admissions",
-          "description": "Approve Telegram or Discord routes before they can reach a Burrow agent."
-        },
-        "primary": {
-          "title": "Pending admissions",
-          "description": "Review chat identity and choose the enabled Burrow agent that should receive it.",
-          "capability": "settingsUi"
-        }
-      },
-      {
-        "id": "chat-mappings",
-        "navigation": {
-          "title": "Chat mappings",
-          "description": "Manage approved Telegram or Discord chat-to-agent routing."
-        },
-        "primary": {
-          "title": "Chat mappings",
-          "description": "Change the destination agent or disable a mapping without deleting its history.",
+          "title": "Diagnostics",
           "capability": "settingsUi"
         }
       }
