@@ -46,8 +46,27 @@ function botMentionRange(message, bot) {
   }
   return null;
 }
-function botMentioned(message, bot) {
-  return Boolean(botMentionRange(message, bot)) || String(message.reply_to_message?.from?.id || '') === String(bot?.id || '');
+// Entity offsets are UTF-16 offsets, just like JS slice. Only mentions of
+// connected goblins select recipients; mentioning a human is normal group talk.
+function botTargets(message, bots) {
+  const targets = new Set();
+  for (const entity of Array.isArray(message.entities) ? message.entities : []) {
+    if (!Number.isInteger(entity.offset) || !Number.isInteger(entity.length) || entity.offset < 0 || entity.length < 1) continue;
+    const value = message.text.slice(entity.offset, entity.offset + entity.length);
+    if (entity.type === 'text_mention') {
+      const bot = bots.find(bot => String(bot.id) === String(entity.user?.id));
+      if (bot?.id) targets.add(String(bot.id));
+    }
+    if (entity.type === 'mention' || entity.type === 'bot_command') {
+      const username = (entity.type === 'bot_command' ? value.match(/@([^@\s]+)$/)?.[1] : value.replace(/^@/, ''))?.toLowerCase();
+      const bot = bots.find(bot => bot.username && String(bot.username).replace(/^@/, '').toLowerCase() === username);
+      if (bot?.id) targets.add(String(bot.id));
+    }
+  }
+  if (targets.size) return targets; // Explicit addressing overrides reply threading.
+  const reply = message.reply_to_message?.from;
+  if (reply?.id && bots.some(bot => String(bot.id) === String(reply.id))) targets.add(String(reply.id));
+  return targets;
 }
 function stripBotMention(message, bot) {
   const text = String(message?.text || '');
@@ -92,7 +111,7 @@ export function createTelegramApi({ token, fetchImpl = fetch }) {
   });
 }
 
-export function createTelegramConnection({ context, connectionId = 'default', fetchImpl = fetch, clock = Date.now, pollTimeoutSeconds = 15, idleDelayMs = 2_000, retryDelayMs = 3_000, roomHistory = createRoomHistory({ settings: context?.settings, clock }) } = {}) {
+export function createTelegramConnection({ context, connectionId = 'default', fetchImpl = fetch, clock = Date.now, pollTimeoutSeconds = 15, idleDelayMs = 2_000, retryDelayMs = 3_000, roomHistory = createRoomHistory({ settings: context?.settings, clock }), telegramBots = async () => [] } = {}) {
   if (!context?.settings || !context?.secrets || !context?.agents) throw new Error('switchboard_context_required');
   const controller = new AbortController();
   let loopPromise = null;
@@ -112,7 +131,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
   };
   const setting = (name, fallback) => context.settings.get(name, fallback);
   const write = (name, value) => context.settings.set(name, value);
-  async function configuration() { return { enabled: false, ...await setting('configuration', {}) }; }
+  async function configuration() { return { enabled: false, agentId: null, ...await setting('configuration', {}) }; }
   async function transport() { return { health: 'stopped', polling: 'stopped', lastPollAt: null, error: null, offset: 0, bot: null, ...await setting('transport-state', {}) }; }
   async function mappings() { return boundedList(await setting('mappings', []), MAX_MAPPINGS); }
   async function pending() { return boundedList(await setting('pending-admissions', []), MAX_PENDING); }
@@ -143,6 +162,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     const names = new Map(agents.map(agent => [agent.id, agent.name || agent.id]));
     return {
       enabled: config.enabled === true,
+      agentId: config.agentId,
       tokenConfigured,
       bot: state.bot ? { configured: true, id: state.bot.id, username: state.bot.username || null, displayName: state.bot.displayName || null } : { configured: tokenConfigured },
       transport: { enabled: config.enabled === true, health: state.health, polling: state.polling, lastPollAt: state.lastPollAt, error: state.error },
@@ -160,7 +180,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
   }
   async function notePending(message) {
     const chat = message.chat || {}; const sender = message.from || {};
-    const topicId = message.message_thread_id ?? null; const key = chatKey(chat.id, topicId); const id = routeId(chat.id, topicId);
+    const topicId = chat.type === 'private' ? message.message_thread_id ?? null : null; const id = routeId(chat.id, topicId);
     const approved = await mappings();
     if (approved.some(item => item.id === id)) return;
     const list = await pending();
@@ -172,14 +192,23 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
   }
   async function processMessage(update, bot) {
     const message = update?.message;
-    if (message?.from?.is_bot && !message.sender_chat) return; // Shared bot output is context only; never a trigger.
     if (!message?.chat?.id || typeof message.text !== 'string' || !message.text.trim()) return;
     const topicId = message.message_thread_id ?? null;
     const approved = await mappings();
-    const mapping = approved.find(item => item.id === routeId(message.chat.id, topicId));
-    if (!mapping || mapping.enabled === false) { await notePending(message); return; }
+    const exact = approved.find(item => item.id === routeId(message.chat.id, topicId));
+    const parent = topicId !== null && message.chat.type !== 'private' ? approved.find(item => item.id === routeId(message.chat.id, null)) : null;
+    const source = exact || parent;
+    const mapping = source ? { ...source, topicId, ...(parent && !exact ? { inheritedFrom: parent.id } : {}) } : null;
+    if (message.from?.is_bot && !message.sender_chat) {
+      if (mapping && mapping.enabled !== false && isRoom(mapping)) await roomHistory.record(mapping, message, telegramSpeaker(message.from));
+      return;
+    }
+    if (!mapping || mapping.enabled === false || !mapping.agentId) { await notePending(message); return; }
     if (isRoom(mapping)) await roomHistory.record(mapping, message, telegramSpeaker(message.sender_chat || message.from));
-    if (mapping.chatType !== 'direct' && !botMentioned(message, bot)) return;
+    if (mapping.chatType !== 'direct') {
+      const targets = botTargets(message, [bot, ...await telegramBots()]);
+      if (targets.size && !targets.has(String(bot.id))) return;
+    }
     if (!coreStatus().available) {
       await replaceDelivery({ id: `in:${update.update_id}`, direction: 'inbound', updateId: update.update_id, chatId: mapping.chatId, topicId: mapping.topicId, chatTitle: mapping.chatTitle, chatType: mapping.chatType, agentId: mapping.agentId, status: 'failed', error: 'core_external_agent_turns_unavailable', at: nowIso(clock) });
       return;
@@ -193,6 +222,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     const submission = existing?.submission || {
       agentId: mapping.agentId,
       sessionId: connectionId === 'default' ? sessionIdFor(mapping) : `telegram:${connectionId}:${mapping.chatId}:${mapping.topicId ?? 'root'}`,
+      displayMessage: cleanText,
       message: telegramPrompt({ ...message, text: cleanText }, mapping, await roomHistory.context(mapping, message.message_id)),
       idempotencyKey: connectionId === 'default' ? `telegram-update-${update.update_id}` : `telegram-${connectionId}-update-${update.update_id}`,
     };
@@ -200,6 +230,12 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     await replaceDelivery({ ...inbound, submission, status: 'submitting', at: nowIso(clock) });
     const accepted = await context.agents.turns.submit(submission);
     await replaceDelivery({ ...inbound, submission: null, turnId: accepted.turn.id, status: TERMINAL_TURNS.has(accepted.turn.status) ? accepted.turn.status : 'processing', at: nowIso(clock) });
+  }
+  async function deliveryRoute(item) {
+    const routes = await mappings();
+    const exact = routes.find(route => route.id === routeId(item.chatId, item.topicId));
+    const route = exact || routes.find(route => route.id === routeId(item.chatId, null));
+    return route && route.enabled !== false && route.agentId === item.agentId;
   }
   async function reconcile(api, signal = controller.signal) {
     const list = await deliveries();
@@ -210,6 +246,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
         continue;
       }
       if (item.direction !== 'inbound' || !item.turnId || ['delivered', 'failed', 'interrupted'].includes(item.status)) continue;
+      if (!await deliveryRoute(item)) { await replaceDelivery({ ...item, status: 'interrupted', error: 'mapping_unavailable' }); continue; }
       let turn;
       try { turn = await context.agents.turns.read(item.turnId); }
       catch { continue; }
@@ -226,6 +263,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
         let first = true;
         for (const part of chunks(answer)) {
           signal.throwIfAborted();
+          if (!await deliveryRoute(item)) return;
           const posted = await api.sendMessage({ chatId: item.chatId, topicId: item.topicId, text: part, replyToMessageId: first ? item.telegramMessageId : null, signal });
           if (isRoom(item)) {
             const bot = (await transport()).bot;
@@ -297,27 +335,36 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     }
   }
   async function configure(input) {
-    const value = exactObject(input, ['enabled', 'token', 'bot'], 'configuration_invalid');
+    const value = exactObject(input, ['enabled', 'token', 'bot', 'agentId'], 'configuration_invalid');
     if (typeof value.enabled !== 'boolean') throw Object.assign(new Error('configuration_invalid'), { statusCode: 400 });
+    const agentId = value.agentId === undefined ? (await configuration()).agentId : value.agentId;
+    if (value.agentId !== undefined && agentId !== null) await validateAgent(boundedString(agentId, 96, 'configuration_invalid'));
     if (value.token !== undefined) await context.secrets.set('telegram-bot-token', boundedString(value.token, 4096, 'telegram_token_invalid'));
-    await write('configuration', { enabled: value.enabled });
+    const previous = await configuration();
+    if (agentId !== previous.agentId) {
+      const approved = await mappings();
+      const inherited = approved.filter(route => route.inheritedAgent);
+      await write('deliveries', (await deliveries()).map(item => item.direction === 'inbound' && inherited.some(route => String(route.chatId) === String(item.chatId) && (route.topicId == null || route.topicId === item.topicId)) && !['delivered', 'failed', 'interrupted'].includes(item.status) ? { ...item, status: 'interrupted', error: 'agent_changed' } : item));
+      await write('mappings', approved.map(route => route.inheritedAgent ? { ...route, agentId } : route));
+    }
+    await write('configuration', { enabled: value.enabled, agentId });
     const state = await transport();
     await write('transport-state', { ...state, ...(value.token !== undefined ? { bot: value.bot || null } : {}), health: value.enabled ? 'unknown' : 'stopped', polling: value.enabled ? 'starting' : 'stopped', error: null });
     wake(); return publicState();
   }
   async function clearToken() {
     await context.secrets.clear('telegram-bot-token');
-    await write('configuration', { enabled: false });
+    await write('configuration', { ...await configuration(), enabled: false });
     await write('transport-state', { ...(await transport()), bot: null, health: 'stopped', polling: 'stopped', error: null });
     wake(); return publicState();
   }
   async function approve(id, input) {
-    const value = exactObject(input, ['agentId'], 'approval_invalid'); const agentId = boundedString(value.agentId, 96, 'approval_invalid');
+    const value = exactObject(input, ['agentId'], 'approval_invalid'); const agentId = boundedString(value.agentId ?? (await configuration()).agentId, 96, 'approval_invalid');
     await validateAgent(agentId);
     const requests = await pending(); const request = requests.find(item => item.id === id);
     if (!request) throw Object.assign(new Error('pending_admission_not_found'), { statusCode: 404 });
     const approved = await mappings();
-    const mapping = { id: request.id, chatId: request.chatId, topicId: request.topicId ?? null, chatTitle: request.chatTitle, chatType: request.chatType, agentId, enabled: true, approvedAt: nowIso(clock) };
+    const mapping = { id: request.id, chatId: request.chatId, topicId: request.topicId ?? null, chatTitle: request.chatTitle, chatType: request.chatType, agentId, inheritedAgent: value.agentId === undefined, enabled: true, approvedAt: nowIso(clock) };
     const index = approved.findIndex(item => item.id === mapping.id);
     if (index >= 0) approved[index] = mapping; else approved.unshift(mapping);
     await write('mappings', approved.slice(0, MAX_MAPPINGS));
@@ -336,7 +383,12 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     await validateAgent(agentId);
     const approved = await mappings(); const index = approved.findIndex(item => item.id === id);
     if (index < 0) throw Object.assign(new Error('mapping_not_found'), { statusCode: 404 });
-    approved[index] = { ...approved[index], agentId, enabled: value.enabled, updatedAt: nowIso(clock) };
+    const changed = approved[index];
+    const affected = item => String(item.chatId) === String(changed.chatId) && (chatKey(item.chatId, item.topicId) === chatKey(changed.chatId, changed.topicId) || (changed.topicId == null && !approved.some(route => route.id !== id && chatKey(route.chatId, route.topicId) === chatKey(item.chatId, item.topicId))));
+    if (!value.enabled || changed.agentId !== agentId) {
+      await write('deliveries', (await deliveries()).map(item => item.direction === 'inbound' && affected(item) && !['delivered', 'failed', 'interrupted'].includes(item.status) ? { ...item, status: 'interrupted', error: 'mapping_changed' } : item));
+    }
+    approved[index] = { ...approved[index], inheritedAgent: false, agentId, enabled: value.enabled, updatedAt: nowIso(clock) };
     await write('mappings', approved); return publicState();
   }
   async function deleteMapping(id) {
@@ -345,7 +397,7 @@ export function createTelegramConnection({ context, connectionId = 'default', fe
     if (!mapping) throw Object.assign(new Error('mapping_not_found'), { statusCode: 404 });
     // Retain history, but never send a queued reply after this route is removed
     // (including after restart or re-admission). Already sent messages are untouched.
-    const sameRoute = item => chatKey(item.chatId, item.topicId) === chatKey(mapping.chatId, mapping.topicId);
+    const sameRoute = item => String(item.chatId) === String(mapping.chatId) && (chatKey(item.chatId, item.topicId) === chatKey(mapping.chatId, mapping.topicId) || (mapping.topicId == null && !approved.some(route => route.id !== id && chatKey(route.chatId, route.topicId) === chatKey(item.chatId, item.topicId))));
     const recent = await deliveries();
     await write('deliveries', recent.map(item => sameRoute(item) && item.direction === 'inbound' && !['delivered', 'failed', 'interrupted'].includes(item.status)
       ? { ...item, status: 'interrupted', error: 'mapping_deleted', updatedAt: nowIso(clock) }

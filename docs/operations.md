@@ -12,7 +12,7 @@ Answers are sent as plain text (no Telegram parse mode or Discord allowed mentio
 
 ## Multiple connections
 
-Select the intended bot in every Settings section. Each worker has an independent Telegram cursor or Discord gateway session, credential, admissions and bounded delivery history. A failing or paused bot does not stop the other pollers. Token replacement is restricted to the same bot; add another connection for a different bot. Duplicate bots are rejected even when another connection is disabled or its credential was cleared, until that connection is removed.
+Select the intended bot on **Bots** or **Diagnostics**. Each worker has an independent Telegram cursor or Discord gateway session, credential, admissions and bounded delivery history. A failing or paused bot does not stop the other pollers. Token replacement is restricted to the same bot; add another connection for a different bot. Duplicate bots are rejected even when another connection is disabled or its credential was cleared, until that connection is removed.
 
 ## Telegram polling and Discord gateway behavior
 
@@ -26,9 +26,9 @@ State survives through host settings/secrets, but collections are bounded. The p
 
 ## Group, channel and thread quick checks
 
-For Telegram, follow the [group setup checklist](setup.md#groups-and-forum-topics) before granting more permissions. Check the exact bot connection and topic, Telegram delivery/privacy, then Switchboard admission and mention/reply filtering—in that order. `/start@BotUsername` may produce a pending request but does not act as a Switchboard start command. After approval, send a fresh human-authored `@BotUsername question` or reply to that bot. Admin status alone neither approves the route nor makes unaddressed conversation execute.
+For Telegram, check delivery/privacy, then the bot's assigned goblin and root-group approval on **Bots**. No known bot target means ordinary group speech broadcasts to participating bots; mentions/replies select known bots. Topics inherit group access, not history. Discord inherited access requires one server grant and a default agent, with Discord channel/thread permissions still applying. Explicit room overrides can independently block or grant access. See [routing](routing.md).
 
-For Discord, check each bot's Message Content intent, View Channels, Send Messages, Read Message History, Send Messages in Threads and private-thread membership. Approve each bot/channel/thread separately; ask A to speak, then ask B about A's posted reply rather than expecting a bot-trigger loop. See [Discord setup](discord.md).
+For Discord, check each bot's Message Content intent, View Channels, Send Messages, Read Message History, Send Messages in Threads and private-thread membership. Authorize the observed server once per bot; channels/threads inherit access unless explicitly overridden; ask A to speak, then ask B about A's posted reply rather than expecting a bot-trigger loop. See [Discord setup](discord.md).
 
 ## Diagnose in order
 
@@ -51,7 +51,7 @@ For Discord, check each bot's Message Content intent, View Channels, Send Messag
 | Inbound `succeeded`, no message | Check for empty answer or an outbound `unknown`; success is not proof of delivery |
 | Outbound `unknown` | Inspect chat for complete/partial delivery; do not blindly resubmit work |
 | Denied chat returns | Expected: denial removes one request, not a permanent block |
-| Disabled chat never becomes pending | Expected: its saved mapping still exists; use Chat Mappings to re-enable |
+| Disabled chat never becomes pending | Expected: its saved mapping still exists; use Bots → Room overrides to re-enable |
 
 ## A useful support report
 

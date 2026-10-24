@@ -175,12 +175,16 @@ export function createDiscordConnection(options = {}) {
   let abort = new AbortController(), socket = null, socketVersion = 0, reconnectTimer, heartbeatTimer, handshakeTimer, reconcileTimer;
   let sequence = null, sessionId = null, resumeUrl = null, awaitingAck = false, currentApi = null, identity = null, failures = 0;
   const blocked = new Set();
+  const blockedGuilds = new Set();
+  const guildAborts = new Map();
   const interactions = new Map();
   const get = (key, fallback) => context.settings.get(key, fallback);
   const put = (key, value) => context.settings.set(key, value);
-  const config = async () => ({ enabled: false, ...await get('configuration', {}) });
+  const config = async () => ({ enabled: false, agentId: null, ...await get('configuration', {}) });
   const transport = async () => ({ health: 'stopped', polling: 'stopped', gateway: 'stopped', bot: null, error: null, ...await get('transport-state', {}) });
   const mappings = async () => (await get('mappings', [])).slice(0, 250);
+  const servers = async () => (await get('servers', [])).slice(0, 250);
+  const observedGuilds = async () => (await get('observed-guilds', [])).slice(0, 250);
   const pending = async () => (await get('pending-admissions', [])).slice(0, 100);
   const deliveries = async () => (await get('deliveries', [])).slice(0, 200);
   const serialize = operation => { const result = queue.then(operation, operation); queue = result.catch(() => {}); return result; };
@@ -223,9 +227,13 @@ export function createDiscordConnection(options = {}) {
   }
   async function publicState() {
     const [configuration, saved, routes, requests, recent, tokenConfigured, agents] = await Promise.all([config(), transport(), mappings(), pending(), deliveries(), context.secrets.has('discord-bot-token'), context.agents.list()]);
+    const savedServers = await servers();
+    const serverIds = new Set(savedServers.map(item => item.guildId));
     const names = new Map(agents.map(agent => [agent.id, agent.name || agent.id]));
     return {
-      enabled: configuration.enabled === true, tokenConfigured,
+      enabled: configuration.enabled === true, agentId: configuration.agentId, tokenConfigured,
+      servers: savedServers,
+      pendingServers: (await observedGuilds()).filter(guild => !serverIds.has(guild.guildId)),
       bot: saved.bot ? { configured: true, id: saved.bot.id, username: saved.bot.username || null, displayName: saved.bot.displayName || saved.bot.global_name || null } : { configured: tokenConfigured },
       transport: { kind: 'discord', enabled: configuration.enabled === true, health: saved.health, polling: saved.polling, gateway: saved.gateway, lastPollAt: saved.lastPollAt || null, error: saved.error },
       coreAgentTurns: coreAvailable() ? { available: true } : { available: false, reason: 'core_external_agent_turns_unavailable' },
@@ -238,7 +246,72 @@ export function createDiscordConnection(options = {}) {
     if (!agent) fail('agent_not_found', 404);
     if (!agent.enabled) fail('agent_disabled', 409);
   }
-  const mappingFor = async item => (await mappings()).find(mapping => (mapping.channelId || mapping.chatId) === item.channelId && (mapping.guildId || null) === (item.guildId || null) && mapping.enabled !== false && mapping.agentId === item.agentId && !blocked.has(mapping.id));
+  function guildSignal(guildId) {
+    if (!guildAborts.has(guildId)) guildAborts.set(guildId, new AbortController());
+    return guildAborts.get(guildId).signal;
+  }
+  function revokeGuild(guildId) {
+    blockedGuilds.add(guildId);
+    guildAborts.get(guildId)?.abort();
+    guildAborts.delete(guildId);
+  }
+  async function serverEnabled(guildId) {
+    return snowflake(guildId) && !blockedGuilds.has(guildId) && (await servers()).some(item => item.guildId === guildId && item.enabled === true) && !blockedGuilds.has(guildId);
+  }
+  async function routeEnabled(route) {
+    if (!route || route.enabled === false || blocked.has(route.id)) return false;
+    if (!route.inherited) return true;
+    const configuration = await config();
+    return Boolean(configuration.agentId) && route.agentId === configuration.agentId && await serverEnabled(route.guildId);
+  }
+  async function mappingFor(item) {
+    const route = (await mappings()).find(mapping => (mapping.channelId || mapping.chatId) === item.channelId && (mapping.guildId || null) === (item.guildId || null) && mapping.agentId === item.agentId);
+    return await routeEnabled(route) ? route : null;
+  }
+  async function observeGuild(event, gen) {
+    if (!snowflake(event.guild_id) || !valid(gen)) return;
+    const guilds = await observedGuilds();
+    const old = guilds.find(item => item.guildId === event.guild_id);
+    const name = bounded(event.guild?.name || event.guild_name || old?.name || event.guild_id, 180);
+    if (!valid(gen)) return;
+    await put('observed-guilds', [{ guildId: event.guild_id, name }, ...guilds.filter(item => item.guildId !== event.guild_id)].slice(0, 250));
+    const saved = await servers();
+    if (saved.some(item => item.guildId === event.guild_id && item.name !== name) && valid(gen)) {
+      await put('servers', saved.map(item => item.guildId === event.guild_id ? { ...item, name } : item));
+    }
+  }
+  async function channelFor(event, gen) {
+    let channel = event.channel || null;
+    if (!channel) {
+      const token = currentApi ? null : await context.secrets.get('discord-bot-token');
+      const api = currentApi || (token ? createDiscordApi({ token, fetchImpl }) : null);
+      if (api && valid(gen)) { try { channel = await api.getChannel(event.channel_id, { signal: abort.signal }); } catch {} }
+    }
+    return channel;
+  }
+  async function inheritedRoute(event, gen) {
+    const existing = (await mappings()).find(item => (item.channelId || item.chatId) === event.channel_id && (item.guildId || null) === (event.guild_id || null));
+    // Even a disabled explicit mapping is authoritative; it must never fall through.
+    if (existing) return existing;
+    const configuration = await config();
+    if (!configuration.agentId || !await serverEnabled(event.guild_id) || !valid(gen)) return null;
+    try { await validateAgent(configuration.agentId); } catch { return null; }
+    const channel = await channelFor(event, gen);
+    if (!valid(gen) || (channel?.guild_id && channel.guild_id !== event.guild_id)) return null;
+    const routes = await mappings();
+    if (routes.length >= 250) return null;
+    const route = {
+      id: hash(`discord:${event.guild_id}:${event.channel_id}`), chatId: event.channel_id, channelId: event.channel_id, guildId: event.guild_id,
+      topicId: null, chatTitle: bounded(channel?.name || event.channel_name || event.channel_id, 180),
+      chatType: [10, 11, 12].includes(channel?.type) ? 'thread' : 'group', channelType: channel?.type ?? 0,
+      parentId: snowflake(channel?.parent_id) ? channel.parent_id : null,
+      agentId: configuration.agentId, enabled: true, inherited: true, approvedAt: stamp(clock),
+    };
+    if (!await serverEnabled(event.guild_id) || !valid(gen)) return null;
+    await put('mappings', [route, ...routes]);
+    await put('pending-admissions', (await pending()).filter(item => item.id !== route.id));
+    return route;
+  }
   async function submit(item, gen) {
     if (!await active(gen) || !await mappingFor(item) || !valid(gen)) return;
     try {
@@ -253,19 +326,16 @@ export function createDiscordConnection(options = {}) {
   async function processMessage(event, bot, gen = generation) {
     if (!await active(gen)) return;
     const message = event?.t ? (event.t === 'MESSAGE_CREATE' ? event.d : null) : event;
-    if (!message || !snowflake(message.id) || !snowflake(message.channel_id) || typeof message.content !== 'string' || !message.content.trim() || !snowflake(message.author?.id)) return;
+    if (!message || !snowflake(message.id) || !snowflake(message.channel_id) || !snowflake(message.author?.id)) return;
     if (message.guild_id !== undefined && !snowflake(message.guild_id)) return;
     if (!snowflake(bot?.id)) return;
-    let mapping = (await mappings()).find(item => (item.channelId || item.chatId) === message.channel_id && (item.guildId || null) === (message.guild_id || null));
+    await observeGuild(message, gen);
+    if (typeof message.content !== 'string' || !message.content.trim()) return;
+    const mapping = await inheritedRoute(message, gen);
     const machine = message.author.bot === true || Boolean(message.webhook_id);
-    if (!mapping || mapping.enabled === false || blocked.has(mapping.id)) {
+    if (!await routeEnabled(mapping)) {
       if (mapping || machine || !valid(gen)) return;
-      let channel = message.channel || null;
-      if (!channel && currentApi) { try { channel = await currentApi.getChannel(message.channel_id, { signal: abort.signal }); } catch {} }
-      else if (!channel) {
-        const token = await context.secrets.get('discord-bot-token');
-        if (token) { try { channel = await createDiscordApi({ token, fetchImpl }).getChannel(message.channel_id, { signal: abort.signal }); } catch {} }
-      }
+      const channel = await channelFor(message, gen);
       if (!valid(gen)) return;
       if (channel?.guild_id && channel.guild_id !== message.guild_id) return;
       const guildId = message.guild_id || null;
@@ -312,7 +382,9 @@ export function createDiscordConnection(options = {}) {
   const scoped = (item, route) => item.direction === 'inbound' && item.agentId === route.agentId && item.channelId === (route.channelId || route.chatId) && (item.guildId || null) === (route.guildId || null) && item.submission?.sessionId === sessionFor(route) && !DONE.has(item.status);
   async function commandRoute(event, gen) {
     if (!await active(gen)) return null;
-    return (await mappings()).find(route => (route.channelId || route.chatId) === event.channel_id && (route.guildId || null) === (event.guild_id || null) && route.enabled !== false && !blocked.has(route.id));
+    await observeGuild(event, gen);
+    const route = await inheritedRoute(event, gen);
+    return await routeEnabled(route) ? route : null;
   }
   function canChange(event) {
     if (!event.guild_id) return true; // Gateway DM interaction user is the channel participant.
@@ -360,7 +432,7 @@ export function createDiscordConnection(options = {}) {
     if (name === 'new') {
       if (!context.agents.sessions?.create) return 'Upgrade Core before using /new.';
       const created = await context.agents.sessions.create({ agentId: route.agentId, idempotencyKey: `discord-${connectionId}-interaction-${event.id}` });
-      if (!await active(gen)) return 'Connection changed; please try again.';
+      if (!await active(gen) || !await routeEnabled(route)) return 'Connection changed; please try again.';
       if (created?.agentId !== route.agentId || typeof created.sessionId !== 'string') throw new Error('discord_response_invalid');
       // Preserve prior sessions, but suppress their late transport replies and room context.
       await interruptRoute(route, 'session_reset');
@@ -399,7 +471,7 @@ export function createDiscordConnection(options = {}) {
         try {
           choices = await Promise.race([(async () => {
           let found = [];
-          const route = await commandRoute(event, gen);
+          const route = await serialize(() => commandRoute(event, gen));
           const focused = event.data.options?.find(item => item.focused && item.name === 'selection');
           if (route?.sessionId && canChange(event) && focused && event.data.name === 'model') {
             const inventory = await Promise.race([modelChoices(), sleep(1200).then(() => [])]);
@@ -461,7 +533,7 @@ export function createDiscordConnection(options = {}) {
         let index = 0;
         for (const part of chunks(answer)) {
           if (!await active(gen) || !await mappingFor(item) || !valid(gen)) return;
-          const posted = await api.sendMessage({ channelId: item.channelId, chatId: item.channelId, text: part, replyToMessageId: index === 0 ? item.messageId : null, nonce: hash(`${connectionId}:${turn.id}:${index}`), signal: abort.signal });
+          const posted = await api.sendMessage({ channelId: item.channelId, chatId: item.channelId, text: part, replyToMessageId: index === 0 ? item.messageId : null, nonce: hash(`${connectionId}:${turn.id}:${index}`), signal: route.inherited ? AbortSignal.any([abort.signal, guildSignal(route.guildId)]) : abort.signal });
           if (!valid(gen)) return;
           if (snowflake(posted?.id)) await history.record(route, { ...posted, content: part, author: { ...(identity || (await transport()).bot || {}), bot: true } }, connectionId);
           index++;
@@ -568,6 +640,8 @@ export function createDiscordConnection(options = {}) {
               clearTimeoutImpl(handshakeTimer); handshakeTimer = undefined;
               await state({ health: 'healthy', polling: 'active', gateway: 'active', lastPollAt: stamp(clock), error: null }, gen);
               scheduleReconcile(gen);
+            } else if (packet.t === 'GUILD_CREATE' || packet.t === 'GUILD_UPDATE') {
+              await observeGuild({ guild_id: packet.d?.id, guild_name: packet.d?.name }, gen);
             } else if (packet.t === 'MESSAGE_CREATE') {
               await processMessage(packet, bot, gen);
             }
@@ -601,8 +675,13 @@ export function createDiscordConnection(options = {}) {
     return serialize(operation).finally(() => { changing--; if (!changing) launch(); });
   }
   async function configure(input) {
-    const value = object(input, ['enabled', 'token', 'bot'], 'configuration_invalid');
+    const value = object(input, ['enabled', 'token', 'bot', 'agentId'], 'configuration_invalid');
     if (typeof value.enabled !== 'boolean') fail('configuration_invalid');
+    const previous = await config();
+    const agentId = value.agentId === undefined ? previous.agentId : value.agentId === null ? null : text(value.agentId, 96, 'configuration_invalid');
+    // Omission preserves legacy/default assignments even if that agent is no longer present.
+    // New grants still validate the assigned agent before authorizing a server.
+    if (value.agentId !== undefined && agentId !== null) await validateAgent(agentId);
     let bot;
     if (value.token !== undefined) {
       const token = text(value.token, 4096, 'discord_token_invalid');
@@ -613,21 +692,52 @@ export function createDiscordConnection(options = {}) {
       bot = { id: bot.id, username: bounded(bot.username, 180) || null, global_name: bounded(bot.global_name, 180) || null, displayName: bounded(bot.displayName || bot.global_name || bot.username, 180), bot: true };
       await context.secrets.set('discord-bot-token', token);
     }
-    await put('configuration', { enabled: value.enabled });
+    if (agentId !== previous.agentId) {
+      const routes = await mappings();
+      for (const route of routes.filter(item => item.inherited)) await interruptRoute(route, 'agent_changed');
+      await put('mappings', routes.map(route => route.inherited ? { ...route, agentId, sessionId: null, updatedAt: stamp(clock) } : route));
+    }
+    await put('configuration', { enabled: value.enabled, agentId });
     await state({ ...(bot ? { bot, boundBotId: bot.id } : {}), health: value.enabled ? 'unknown' : 'stopped', polling: value.enabled ? 'starting' : 'stopped', gateway: value.enabled ? 'starting' : 'stopped', error: null });
     return publicState();
   }
   async function clearToken() {
     const previous = await transport();
-    await context.secrets.clear('discord-bot-token'); await put('configuration', { enabled: false });
+    await context.secrets.clear('discord-bot-token'); await put('configuration', { ...await config(), enabled: false });
     await state({ boundBotId: previous.boundBotId || previous.bot?.id || null, bot: null, health: 'stopped', polling: 'stopped', gateway: 'stopped', error: null }); return publicState();
   }
+  async function configureServer(guildId, input) {
+    if (!snowflake(guildId)) fail('server_invalid');
+    const value = object(input, ['enabled'], 'server_invalid');
+    if (typeof value.enabled !== 'boolean') fail('server_invalid');
+    const configuration = await config();
+    if (value.enabled) {
+      if (!configuration.agentId) fail('agent_required', 409);
+      await validateAgent(configuration.agentId);
+    }
+    const saved = await servers();
+    const old = saved.find(item => item.guildId === guildId);
+    const observed = (await observedGuilds()).find(item => item.guildId === guildId);
+    if (!old && !observed) fail('server_not_found', 404);
+    if (!old && saved.length >= 250) fail('server_limit_reached', 409);
+    await put('servers', [{ guildId, name: observed?.name || old.name, enabled: value.enabled }, ...saved.filter(item => item.guildId !== guildId)]);
+    if (!value.enabled) for (const route of (await mappings()).filter(item => item.inherited && item.guildId === guildId)) await interruptRoute(route, 'server_revoked');
+    return publicState();
+  }
+  async function deleteServer(guildId) {
+    if (!snowflake(guildId)) fail('server_invalid');
+    const saved = await servers();
+    if (!saved.some(item => item.guildId === guildId)) fail('server_not_found', 404);
+    await put('servers', saved.filter(item => item.guildId !== guildId));
+    for (const route of (await mappings()).filter(item => item.inherited && item.guildId === guildId)) await interruptRoute(route, 'server_revoked');
+    return publicState();
+  }
   async function approve(id, input) {
-    const value = object(input, ['agentId'], 'approval_invalid'); const agentId = text(value.agentId, 96, 'approval_invalid'); await validateAgent(agentId);
+    const value = object(input, ['agentId'], 'approval_invalid'); const agentId = text(value.agentId ?? (await config()).agentId, 96, 'approval_invalid'); await validateAgent(agentId);
     const requests = await pending(); const request = requests.find(item => item.id === id); if (!request) fail('pending_admission_not_found', 404);
     const routes = await mappings(); if (routes.length >= 250 && !routes.some(item => item.id === id)) fail('mapping_limit_reached', 409);
     const { requester: _requester, requestedAt: _requestedAt, ...route } = request;
-    await put('mappings', [{ ...route, agentId, enabled: true, approvedAt: stamp(clock) }, ...routes.filter(item => item.id !== id)]);
+    await put('mappings', [{ ...route, agentId, inherited: false, enabled: true, approvedAt: stamp(clock) }, ...routes.filter(item => item.id !== id)]);
     await put('pending-admissions', requests.filter(item => item.id !== id)); blocked.delete(id); return publicState();
   }
   async function deny(id) {
@@ -638,7 +748,7 @@ export function createDiscordConnection(options = {}) {
     const value = object(input, ['agentId', 'enabled'], 'mapping_invalid'); const agentId = text(value.agentId, 96, 'mapping_invalid');
     if (typeof value.enabled !== 'boolean') fail('mapping_invalid'); await validateAgent(agentId);
     const routes = await mappings(); const index = routes.findIndex(item => item.id === id); if (index < 0) fail('mapping_not_found', 404);
-    const old = routes[index]; routes[index] = { ...old, ...(old.agentId !== agentId ? { sessionId: null } : {}), agentId, enabled: value.enabled, updatedAt: stamp(clock) };
+    const old = routes[index]; routes[index] = { ...old, ...(old.agentId !== agentId ? { sessionId: null } : {}), agentId, inherited: false, enabled: value.enabled, updatedAt: stamp(clock) };
     await put('mappings', routes);
     if (!value.enabled || old.agentId !== agentId) await interruptRoute(old, 'mapping_changed');
     blocked.delete(id); return publicState();
@@ -655,6 +765,23 @@ export function createDiscordConnection(options = {}) {
   async function close() { closed = true; invalidate(); await queue; await state({ health: 'stopped', polling: 'stopped', gateway: 'stopped' }); }
   return Object.freeze({
     start, close, publicState: () => serialize(publicState), configure: input => change(() => configure(input)), clearToken: () => change(clearToken),
+    configureServer: async (guildId, input) => {
+      if (!snowflake(guildId)) fail('server_invalid');
+      const value = object(input, ['enabled'], 'server_invalid');
+      if (typeof value.enabled !== 'boolean') fail('server_invalid');
+      if (!value.enabled) {
+        const known = [...await servers(), ...await observedGuilds()];
+        if (!known.some(item => item.guildId === guildId)) fail('server_not_found', 404);
+        revokeGuild(guildId);
+      }
+      return serialize(() => configureServer(guildId, value)).finally(() => blockedGuilds.delete(guildId));
+    },
+    deleteServer: async guildId => {
+      if (!snowflake(guildId)) fail('server_invalid');
+      if (!(await servers()).some(item => item.guildId === guildId)) fail('server_not_found', 404);
+      revokeGuild(guildId);
+      return serialize(() => deleteServer(guildId)).finally(() => blockedGuilds.delete(guildId));
+    },
     approve: (id, input) => serialize(() => approve(id, input)), deny: id => serialize(() => deny(id)),
     updateMapping: (id, input) => { blocked.add(id); return serialize(() => updateMapping(id, input)).finally(() => blocked.delete(id)); },
     deleteMapping: id => { blocked.add(id); return serialize(() => deleteMapping(id)); },

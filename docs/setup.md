@@ -10,32 +10,24 @@ Keep the token secret. Do not paste it into chat, screenshots, logs, shell comma
 
 ## First direct-chat route
 
-1. Create your bot through Telegram's BotFather and retain the token securely.
-2. Install and enable the Switchboard mod using Burrow's normal mod workflow. Its manifest ID is `burrow-switchboard`; its Settings navigation label is **Switchboard**.
-3. Open **Settings → Switchboard → Configuration**. Choose **Add bot connection**, select **Telegram**, enter a name and token, enable polling, and save. For an existing migrated connection, select it and save its token.
-4. Open **Status** and select that bot connection. Confirm the bot identity, healthy/active transport, and available Core agent turns. Status is a snapshot: revisit the section to refresh it.
-5. Send a nonempty text message to the bot in Telegram. This creates a pending admission; it does **not** run the agent.
-6. Open **Pending Admissions**, select the same **Bot connection**, verify the chat/topic information, choose an enabled agent, and approve.
-7. **Send a fresh text message.** The message that requested admission is not saved for replay. The new message should create an inbound delivery, then a reply after the Core turn completes.
-8. Revisit **Status** and verify delivery state. A healthy poller alone does not prove that a particular answer was delivered.
-
-If the pending request does not appear, first confirm that Telegram is delivering text messages to this bot and that polling is healthy. Switchboard does not configure Telegram-side permissions or privacy settings for you.
+1. Create the bot through BotFather, install Switchboard, and open **Settings → Switchboard → Bots**.
+2. Add/select the Telegram connection, enter its write-only token, assign its goblin and enable polling.
+3. Check the connection's bot identity and transport status. **Diagnostics** contains detailed delivery state; revisit for a fresh snapshot.
+4. Send nonempty text in a private chat. Under the same bot's pending access on **Bots**, approve using its assigned goblin (or choose an explicit room override).
+5. Send a fresh message; the admission message is not replayed. Verify the reply and delivery state.
 
 ## Groups and forum topics
 
-There are **two separate gates**: Telegram must deliver the message to the bot, then Switchboard must accept it for an approved route. Making a bot an administrator does not bypass Switchboard admission or its mention/reply filter.
+Telegram must deliver updates, then Switchboard routes them through approved access. For ordinary group conversation **every participating bot must receive ordinary messages**, using disabled privacy or appropriate administrator status.
 
-### Start with one bot and one topic
+1. On **Bots**, configure each Telegram bot and its assigned goblin.
+2. Add each bot to the group; allow sending text. BotFather's `/setjoingroups` controls whether the bot can join groups.
+3. Configure Telegram delivery as below. Send text in the group or a topic to create a pending **root-group** request for each bot that receives it. A targeted `/start@YourBotUsername` may also request access; Switchboard does not implement a special Telegram activation command.
+4. Approve the group once for each participating bot on **Bots**. Topics inherit group access; no topic-by-topic approval is needed. Existing explicit topic overrides remain authoritative.
+5. Send fresh ordinary human text: every admitted managed bot that receives the update can answer. Mention a connected bot to address only it, or reply to its message. Mentioning multiple managed bots selects them; explicit mentions override reply targeting. Human/unknown-bot mentions do not select a recipient.
+6. Check **Diagnostics**. Root and topics retain separate sessions/history despite shared group authorization. Bot-authored messages are context only, never automatic wakeups.
 
-1. In **Configuration**, add or select the intended bot connection and enable polling. Check that connection's identity and transport in **Status**.
-2. Add that exact bot username to the group. If Telegram will not let you add it, the bot owner can check BotFather's `/setjoingroups`. Ensure the bot is allowed to send text in the group; send restrictions are separate from receiving updates. [Telegram bot settings](https://core.telegram.org/bots/features#edit-settings), [chat permissions](https://core.telegram.org/bots/api#chatpermissions).
-3. Choose Telegram's delivery settings below. For Switchboard's ordinary `@BotUsername question` interaction, a non-admin bot with privacy disabled is an alternative to an admin bot. Neither setting makes all received messages agent prompts.
-4. In the **exact group/topic**, send `/start@YourBotUsername` using the actual bot username. The suffix is attached to the command, with **no space**. It targets that bot rather than relying on a bare `/start` in a multi-bot group. [Telegram command delivery](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
-5. Select the same bot connection in **Pending Admissions**, verify the group/topic, choose the intended enabled agent, and approve. A delivered command can create this pending entry, but Switchboard does not implement `/start` as an activation, configuration or approval command.
-6. **Send a fresh message**, for example `@YourBotUsername Please reply with a short greeting.` Select the real username mention in Telegram. The admission message is not replayed. After a reply exists, replying directly to that bot's message is another supported trigger.
-7. Check the selected connection's deliveries. Repeat admission separately for each additional bot and each topic/root route. Telegram usernames identify bot accounts; the chosen Burrow agent is selected in Switchboard, not by a Telegram command.
-
-A topic's mapping is separate from the group root and other topics. Approval covers the chat/topic, not just the requester: participants who address the bot share its mapped agent session. Start with a limited-capability agent and a harmless question.
+Private chats remain separately admitted. Approval covers the route's participants, not only the requester. Telegram delivery settings do not bypass Switchboard access, and Switchboard cannot recover updates Telegram did not deliver.
 
 ### Privacy mode and administrator rights
 
@@ -49,11 +41,11 @@ These are Telegram-side choices for the operator, not settings Switchboard chang
 
 Starting a private conversation with each bot is useful for a direct-message test, but is **not a general prerequisite for group membership**: Telegram allows a user to add a bot to a group or initiate a private conversation. Private Start does not approve the group, select its agent, change privacy or grant admin rights. Private chats have separate Switchboard admissions. [Telegram bot introduction](https://core.telegram.org/bots#how-are-bots-different-from-users).
 
-### Commands, mentions and replies are not interchangeable
+### Commands, mentions and replies
 
-Switchboard currently recognizes a Telegram `mention` entity matching the bot's username, or a reply whose original sender is that bot. Telegram represents `/start@YourBotUsername` as a `bot_command`, not that separate mention. After approval, the command alone therefore does **not** execute the mapped agent. There is no special `/start` handler. A mention with no question left after stripping it is ignored. See [routing](routing.md).
+Recipient selection recognizes Telegram `mention`, `text_mention` and addressed `bot_command` entities for connected bots. A reply targets a known connected bot only when no explicit bot target is present. A matching username mention is stripped from the selected bot's display text; empty remaining text is ignored. Telegram commands are routed as text, not executed as Switchboard configuration operations. Native slash-command controls currently exist on Discord only.
 
-When several privacy-enabled bots are present, Telegram can deliver a given message to only one of them; replies take priority over a command addressed to another bot. Test one target at a time, and do not reply to bot A while trying to address bot B. [Telegram multi-bot delivery](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
+With privacy enabled, Telegram may deliver a group message to only one bot, and reply delivery may take precedence over an addressed command. Configure broad delivery for each participating bot before testing broadcast semantics. See [Telegram delivery rules](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get).
 
 ### Messages from other bots
 
@@ -71,4 +63,4 @@ Uncheck polling and save to pause ingestion **and reply reconciliation** while r
 
 ## Add more bots
 
-Repeat **Configuration → Add bot connection** for each BotFather bot. Each has its own credential, poll cursor, admissions, mappings, delivery records and Core sessions. Select the intended bot before approving its pending chat. The same Telegram chat/topic can route independently through different bots with distinct Core sessions and idempotency keys, while approved group/topic connections share bounded room context. Removing or pausing one connection does not stop the others.
+Repeat **Bots → Add bot connection** for each BotFather bot. Each has its own credential, poll cursor, admissions, mappings, delivery records and Core sessions. Select the intended bot before approving its pending chat. The same Telegram chat/topic can route independently through different bots with distinct Core sessions and idempotency keys, while approved group/topic connections share bounded room context. Removing or pausing one connection does not stop the others.

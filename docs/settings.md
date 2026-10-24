@@ -1,38 +1,49 @@
 # Settings reference
 
-Switchboard registers four Settings sections under its manifest ID `burrow-switchboard`.
+Switchboard registers two Settings sections under manifest ID `burrow-switchboard`:
 
 | Section | Purpose |
 | --- | --- |
-| **Status** (`status`) | Primary page: transport, bot identity, Core capability, mappings, pending admissions and recent deliveries |
-| **Configuration** (`configuration`) | Add, select, rename, pause or remove named bot connections |
-| **Pending Admissions** (`pending-admissions`) | Choose an enabled agent and approve a request, or deny it |
-| **Chat Mappings** (`chat-mappings`) | Change the selected agent, enable/disable, or delete an existing route |
+| **Bots** (`bots`) | Add/select connections, assign a default goblin, configure credentials and transport state, approve Telegram chat access or Discord servers, handle pending admissions, and manage room overrides |
+| **Diagnostics** (`diagnostics`) | Inspect bot identity, transport/Core health, mappings, pending admissions and recent deliveries |
 
-## Configuration
+Older links to `configuration`, `pending-admissions`, and `chat-mappings` are still accepted by the UI and open **Bots**; an older `status` link opens **Diagnostics**. These are compatibility aliases, not separate current navigation sections.
 
-Every section has a **Bot connection** selector displaying the provider. Discord creation shows an intent/permissions reminder; the configured connection shows its immutable transport. See [Discord setup](discord.md). Selection persists across sections; diagnostics, approvals, mappings and deliveries always belong to that selected bot.
+## Bots
 
-- **Add bot connection:** choose **Telegram** or **Discord**, enter a name (up to 80 characters), token and enable toggle. Save validates the token with the selected provider before creating the connection. The transport is immutable; a bot can belong to only one connection on that provider.
+The **Bot connection** selector displays the provider and persists while moving between sections. All access, mappings and diagnostics belong to the selected connection.
+
+- **Add bot connection:** choose Telegram or Discord, enter a name (up to 80 characters), token, optional **Assigned goblin**, and enable toggle. Saving validates provider identity. Transport is immutable and one provider bot can belong to only one connection.
+- **Assigned goblin:** nullable connection default. New connections may be unassigned. Saving an explicit selection changes inherited Telegram approvals and Discord server routes; selecting the blank option clears the assignment. API clients that omit `agentId` preserve the existing value.
 - **Connection name:** rename without changing routing or history.
-- **Enable Telegram polling / Discord gateway:** enables only this bot. Disabling pauses ingestion and reply reconciliation; other bots continue independently.
-- **Bot token:** write-only password input. Blank preserves the saved secret. A supplied token must be nonempty, at most 4,096 characters. Rotating a token is allowed only for the same provider bot; add a new connection for a different bot.
-- **Clear configured token:** confirmation-protected; removes only this connection's credential and disables it. Its bot binding, Telegram offset (where applicable), mappings and deliveries remain.
-- **Remove connection:** confirmation-protected; stops this worker and permanently deletes its credential, admissions, mappings and delivery state. It does not delete Core conversations or cancel submitted Core turns.
+- **Enable Telegram polling / Discord gateway:** affects only this bot. Disabling pauses ingestion and reply reconciliation; other connections continue.
+- **Bot token:** write-only. Blank preserves the saved secret. Rotation is allowed only for the same provider bot; add a connection for a different bot.
+- **Clear configured token:** confirmation-protected; removes this credential and disables transport while preserving assignment, binding, cursor where applicable, access, mappings and deliveries.
+- **Remove connection:** confirmation-protected; stops the worker and deletes its credential and connection-scoped Switchboard state. It does not delete Core conversations or cancel already submitted Core turns.
 
-Existing installations appear as the **Telegram** connection (`default`), preserving the credential, routes, offset, history and Core session identity without copying secrets.
+Existing installations appear as the Telegram `default` connection, preserving credential, routes, offset/history and Core session identity without copying secrets.
 
-Polling/gateway timeouts, retry intervals, provider endpoints, delivery limits and message chunk size are implementation constants/defaults, not operator settings.
+### Chat and server access
 
-## Status interpretation
+An assigned goblin is required before approving inherited access.
 
-Transport displays health and polling or gateway state and the last completed poll/gateway activity. Bot identity is populated after successful provider identity validation (`getMe` or Discord `/users/@me`). Core availability checks for the external-turn methods; it does not prove a dispatcher is wired or a configured agent will successfully answer.
+- **Telegram:** a pending group/topic request is represented as the root group. Approving it grants that bot connection access to the root and all forum topics; topics retain isolated sessions/history. Direct chats remain individually admitted. Approval with **Use assigned goblin** inherits later assignment changes.
+- **Discord:** once the gateway has observed a guild, it appears under **Server access**. **Approve server** grants inherited access to visible channels and threads without per-channel admission; **Pause server** stops inherited routes but retains the authorization record; **Revoke** removes it. Discord permissions, channel overwrites and private-thread membership still apply.
+- **Pending admissions:** approve a direct/legacy room request with the assigned goblin or choose an explicit agent, or deny the current request. Denial is not permanent.
+- **Room overrides:** inspect mappings and explicitly choose agent/enabled state. Explicit Telegram topic or Discord channel/thread mappings take precedence over group/server inheritance, including when disabled. Deleting only a generated mapping may allow inherited access to recreate it; remove the parent chat/server grant to stop inheritance.
 
-Recent deliveries show direction and status. The API contains additional delivery metadata/errors, but the UI does not render every per-delivery error. The transport error appears as an alert, and missing Core turn support produces a warning.
+Polling/gateway timeouts, retry intervals, provider endpoints, limits and chunk sizes are implementation constants, not operator settings.
 
-The UI loads on mount and after mutations; it has **no periodic auto-refresh**. Revisit the section/page for a newer snapshot. A load failure offers Retry. Leaving the section aborts its pending request and disposes its mounted UI.
+## Diagnostics
+
+Diagnostics displays transport health, polling/gateway activity, bot identity, Core capability, approved mappings, pending admissions and recent deliveries for the selected bot. Discord server authorization itself is managed on **Bots**.
+
+Bot identity is populated after successful Telegram `getMe` or Discord `/users/@me` validation. Core availability checks only for the external-turn methods; it does not prove a configured agent will answer or that provider delivery works.
+
+The UI loads on mount and after mutations and has **no periodic auto-refresh**. Revisit the section/page for a newer snapshot. A load failure offers Retry; leaving the section aborts its pending request and disposes the mounted UI.
+
+Repository fake-DOM/frontend fixtures verify rendering and request wiring only. They are **not** evidence of a live browser session, provider credential, Discord guild observation, Telegram privacy configuration, network reachability or end-to-end delivery.
 
 ## Access control
 
-The mod API rejects unauthenticated requests when the host reports authentication enabled. When host authentication is disabled, the mod does not independently require a login. Protect the Burrow operator interface using the host's access controls; write-only tokens do not make an exposed settings endpoint safe.
-
+The mod API rejects unauthenticated requests when the host reports authentication enabled. When host authentication is disabled, the mod does not independently require a login. Protect the Burrow operator interface using the host's controls; write-only tokens do not make an exposed settings endpoint safe.

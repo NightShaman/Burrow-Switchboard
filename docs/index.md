@@ -6,14 +6,14 @@
 
 ## Current implementation
 
-The implemented transports are **Telegram and Discord, text-only**. Telegram uses outbound long polling; Discord uses an outbound Gateway WebSocket and REST. Neither uses an inbound webhook or requires a public reverse-proxy route. Unknown routes require per-bot admission before messages reach an agent. Approved group/channel/thread routes use addressed-message filtering; Discord additionally supports native slash commands. See [routing](routing.md) for sender and context rules.
+The implemented transports are **Telegram and Discord, text-only**. Telegram uses outbound long polling; Discord uses an outbound Gateway WebSocket and REST. Neither uses an inbound webhook or requires a public reverse-proxy route. Telegram groups are approved once per bot with isolated topic sessions; Discord servers are authorized once with isolated channel/thread sessions. DMs retain admission. Telegram group speech broadcasts unless a known bot is addressed; Discord guild messages still require a human mention/reply. Bots are configured together with credentials, assigned goblin and access on **Bots**; health detail is under **Diagnostics**.
 
 | Implemented | Not implemented here |
 | --- | --- |
 | Operator-managed Telegram polling and Discord Gateway/REST, named bot connections | Other providers or inbound webhooks |
 | Per-bot admission and per-chat/topic or DM/channel/thread agent mapping | Automatic admission, user-level allowlists, permanent deny list |
 | Core external-agent-turn submission and reconciliation | A separate model runner, tool system or Tutor capability |
-| Text answers split to provider limits; Discord `/help`, `/status`, `/stop`, `/new`, `/model` | Attachments, voice, streaming replies; Telegram-native command handling |
+| Text answers split to provider limits; native Discord slash controls | Attachments, voice, streaming replies |
 | Durable bounded room context and delivery records | Unlimited audit history, manual replay or retry |
 
 An approved group/topic or guild channel/thread is a shared route: approval is **not** a separate approval of each participant. Choose an agent whose capabilities are appropriate for everyone who can address the bot there. External messages enter the real agent pipeline; approval is not a guarantee that the message is safe or authorized for every tool action.
@@ -29,11 +29,6 @@ An approved group/topic or guild channel/thread is a shared route: approval is *
 - [Mod-local API](api.md)
 - [Development, verification and source map](development.md)
 
-## Current source baseline
-
-Reviewed **2026-10-24**, source version **2026.10.24.2**, commit `02f490a9357e8f92289d466a04b904907de430ea`. This is source inspection, not a claim of live Telegram/Discord delivery. Check installed Core capabilities, especially before using Discord session commands.
-
 ## Documentation history
 
 The original Telegram-only documentation baseline was source version **2026.10.22.1** (commit `b12d6cb2d9aae46542c55b4da12f605ee8009b34`), inspected **2026-10-22**. This is archival provenance, **not** the current feature list or evidence of live Discord delivery. Verify installed manifest/Core compatibility rather than inferring it from a package date.
-

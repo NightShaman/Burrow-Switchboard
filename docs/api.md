@@ -8,14 +8,18 @@ All mutations return the full aggregate public state. Use connection IDs from `c
 
 | Method and path | Body | Effect |
 | --- | --- | --- |
-| `POST /connections` | `{ "name": "Alerts", "transport": "discord", "token": "<token>", "enabled": true }` | Create a named connection with independent state |
-| `PUT /connections/:connectionId` | `{ "name": "Alerts", "enabled": false, "token": "<optional-same-bot-token>" }` | Rename/configure this connection; name/token optional, enabled required; no transport switch |
+| `POST /connections` | `{ "name": "Alerts", "transport": "discord", "token": "<token>", "enabled": true, "agentId": "hatchet" }` | Create a named connection with independent state |
+| `PUT /connections/:connectionId` | `{ "name": "Alerts", "enabled": false, "agentId": "hatchet", "token": "<optional-same-bot-token>" }` | Rename/configure this connection; name/token optional, enabled required; no transport switch |
+| `PUT /connections/:connectionId/servers/:guildId` | `{ "enabled": true }` | Authorize/resume an observed Discord server; false pauses inherited access |
+| `DELETE /connections/:connectionId/servers/:guildId` | None | Revoke server inheritance; explicit room overrides remain |
 | `POST /connections/:connectionId/token/clear` | None | Clear this credential, disable polling/gateway, preserve binding/state |
 | `DELETE /connections/:connectionId` | None | Stop and delete this connection's credential/state, not Core conversations |
-| `POST /connections/:connectionId/pending/:id/approve` | `{ "agentId": "<agent>" }` | Approve this bot's pending route |
+| `POST /connections/:connectionId/pending/:id/approve` | `{ "agentId": "<agent>" }` | Approve this bot's pending route; `{}` inherits its assigned goblin |
 | `POST /connections/:connectionId/pending/:id/deny` | None | Deny this bot's current request |
 | `PUT /connections/:connectionId/mappings/:id` | `{ "agentId": "<agent>", "enabled": true }` | Update this bot's mapping |
 | `DELETE /connections/:connectionId/mappings/:id` | None | Delete this bot's mapping; later text may request admission again |
+
+`agentId` is an optional nullable connection default: omitted on creation means unassigned, omitted on update preserves it, and null clears it. Explicit assignments must name enabled agents. Existing explicit room mappings remain unchanged. Telegram approvals with `{}` inherit later assignment changes; explicit `agentId` overrides them. Discord server grants need an assigned enabled agent and a guild observed by the gateway; the caller cannot grant an arbitrary unseen guild. Server IDs remain strings.
 
 Names must be nonblank strings up to 80 characters. Unknown properties are rejected. Errors include 400 `connection_invalid`, `connection_transport_invalid`, `connection_name_invalid`, provider-specific `telegram_`/`discord_` token validation, auth, rate limit and response errors; 404 `connection_not_found`; 409 `<provider>_bot_already_connected`, `<provider>_bot_changed_add_connection`. The latter means add the different bot as another connection rather than carrying old routes onto it.
 
@@ -40,7 +44,9 @@ Configuration requires a boolean `enabled`; omit `token` to preserve the secret.
 
 Every successful route returns HTTP 200 with `{ "ok": true, ...state }` and `Cache-Control: no-store`. State includes `connections: [{id, name, transportType, ...connectionState}]` (`transportType` is `telegram` or `discord`) and shared `coreAgentTurns`. For backward compatibility top-level fields below describe only `default` (empty/stopped if removed). Per-connection state includes:
 
-- `enabled` and `tokenConfigured` booleans.
+- `enabled` and `tokenConfigured` booleans; nullable assigned `agentId`.
+- Discord `servers: [{ guildId, name, enabled }]` and `pendingServers: [{ guildId, name }]` from gateway observations.
+- Telegram group requests use the root group identity; inherited topics keep distinct runtime sessions and shared-history rooms.
 - `bot`: configured indicator and, when known, `id`, `username`, `displayName`.
 - `transport`: enabled, health, polling, lastPollAt, error; Discord additionally identifies gateway state. The legacy `polling`/`lastPollAt` field names are also used for gateway activity.
 - `coreAgentTurns`: available and, when unavailable, reason.
@@ -58,8 +64,8 @@ Errors return `{ "ok": false, "error": "<code>" }` with no-store headers. Known 
 | --- | --- |
 | 400 | `configuration_invalid`, `telegram_token_invalid`, `approval_invalid`, `mapping_invalid` |
 | 401 | `operator_authentication_required` when host authentication is enabled but request is unauthenticated |
-| 404 | `agent_not_found`, `pending_admission_not_found`, `mapping_not_found` |
-| 409 | `agent_disabled` |
+| 404 | `agent_not_found`, `pending_admission_not_found`, `mapping_not_found`, `server_not_found` |
+| 409 | `agent_disabled`, `agent_required`, `server_limit_reached` |
 | 500 | Sanitized `switchboard_request_failed` |
 
 Validation order can affect which error is returned; for example approval validates the selected agent before looking up the pending ID. Do not depend on an error as a route-existence probe.

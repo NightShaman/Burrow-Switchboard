@@ -8,7 +8,7 @@
 Telegram message update
   → chat/topic admission
   → record approved group human text in shared room history
-  → addressed-message checks and bounded room/quoted-reply context
+  → transport recipient selection and bounded room/quoted-reply context
   → Core agents.turns.submit (agent, session, message, idempotency key)
   → saved inbound delivery and turn ID
   → later Core agents.turns.read
@@ -29,6 +29,7 @@ The service requires `context.settings`, `context.secrets` and `context.agents`.
 const accepted = await context.agents.turns.submit({
   agentId: mapping.agentId,
   sessionId: `telegram:${chatId}:${topicId ?? 'root'}`,
+  displayMessage: text,
   message: '[Telegram message from … in …]\n\n' + text,
   idempotencyKey: `telegram-update-${updateId}`,
 });
@@ -55,7 +56,7 @@ Configuration invalidates network work before draining the worker queue and bloc
 
 | Host store key | Contents |
 | --- | --- |
-| Settings `configuration` | Telegram polling or Discord gateway enabled flag |
+| Settings `configuration` | Telegram polling or Discord gateway enabled flag and nullable default agent |
 | Settings `transport-state` | Health, polling state, last poll time, sanitized error, cached bot identity, and provider-specific cursor/gateway state |
 | Settings `mappings` | Up to 250 approved chat/topic or channel/thread → agent mappings; Discord may include an owned `sessionId` and `historyAfter` boundary |
 | Settings `pending-admissions` | Up to 100 admission requests |
@@ -100,3 +101,6 @@ frozen before Core submission and reused if acceptance is uncertain. They are
 never exposed in public delivery diagnostics. Shared context never invokes a peer
 agent, so no automatic bot-to-bot wake loop is introduced.
 
+## Inherited access
+
+Telegram approvals can inherit connection assignment (`inheritedAgent`); group-root access covers topics without merging their sessions or context. Explicit topic mappings win. Discord `servers` and gateway-owned `observed-guilds` persist per connection; generated `inherited` routes use the assigned agent and remain isolated per channel/thread. Revocation fences inherited replies, not independent explicit room grants. Operator settings combine bot identity, credential, assignment and access in Bots, with Diagnostics separate.
