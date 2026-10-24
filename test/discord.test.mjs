@@ -88,6 +88,7 @@ test('admissions retain channel identity, thread routes independent, no implicit
   assert.equal(f.submissions.length, 1); assert.equal(f.submissions[0].sessionId, `discord:one:${CHANNEL}`);
   assert.ok(f.submissions[0].sessionId.length < 128); assert.match(f.submissions[0].idempotencyKey, /523456789012345679$/);
   assert.doesNotMatch(f.submissions[0].message.split('[End Discord conversation context]').at(-1), /<@/);
+  assert.equal(f.submissions[0].displayMessage, 'answer');
   await f.service.processMessage(message('523456789012345680', { channel_id: '223456789012345679', content: `<@${BOT.id}> thread?`, mentions: [BOT] }), BOT);
   assert.equal(f.submissions.length, 1); assert.equal((await f.service.publicState()).pending.length, 1);
   const state = await f.service.publicState(); assert.equal(state.mappings.length, 1); assert.equal(state.bot.configured, true);
@@ -103,6 +104,7 @@ test('human mention/reply routing; bots and webhooks context only; DM all text a
   assert.equal(f.submissions.length, 0);
   await f.service.processMessage(message('523456789012345682', { content: 'reply question', message_reference: { message_id: '523456789012345600', channel_id: CHANNEL }, referenced_message: { id: '523456789012345600', content: 'quoted answer', author: BOT, channel_id: CHANNEL } }), BOT);
   assert.equal(f.submissions.length, 1); assert.match(f.submissions[0].message, /quoted answer/); assert.match(f.submissions[0].message, /bot context/); assert.match(f.submissions[0].message, /webhook context/);
+  assert.equal(f.submissions[0].displayMessage, 'reply question'); assert.doesNotMatch(f.submissions[0].displayMessage, /quoted answer|bot context|webhook context/);
   await f.service.processMessage(message('523456789012345683', { content: 'cross-channel reply', message_reference: { message_id: '523456789012345600', channel_id: '1' }, referenced_message: { id: '523456789012345600', content: 'private', author: BOT, channel_id: '1' } }), BOT);
   assert.equal(f.submissions.length, 1);
   const dm = message('623456789012345678', { guild_id: undefined, channel_id: '723456789012345678', channel: { type: 1 }, content: 'private secret' });
