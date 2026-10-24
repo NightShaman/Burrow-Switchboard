@@ -1,4 +1,4 @@
-![Burrow Switchboard](docs/assets/hero.png)
+<img src="docs/assets/hero.png" width="720" alt="Burrow Switchboard" />
 
 # Burrow Switchboard
 
