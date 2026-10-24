@@ -377,3 +377,136 @@ test('failed Gateway event persistence resumes before the gap instead of acknowl
   await until(async () => (await f.service.publicState()).pending.length === 1);
   await f.service.close();
 });
+
+function interaction(id = '623456789012345679', name = 'status', patch = {}) {
+  return { id, application_id: BOT.id, token: 'interaction-private', type: 2, channel_id: CHANNEL, guild_id: GUILD,
+    member: { user: USER, permissions: '32' }, data: { name }, ...patch };
+}
+function interactionApi() {
+  const callbacks = [], edits = [];
+  return { callbacks, edits, interactionCallback: async (event, body) => callbacks.push({ id: event.id, body }), interactionEdit: async (_event, content) => edits.push(content) };
+}
+function sessionApi(f) {
+  let creates = 0, selection = null;
+  f.context.agents.sessions = {
+    create: async input => { creates++; assert.match(input.idempotencyKey, /interaction-/); return { agentId: input.agentId, sessionId: 'owned-fresh' }; },
+    model: async () => ({ selection }),
+    setModel: async input => { selection = { connectionId: input.connectionId, model: input.model }; return { selection }; },
+  };
+  f.context.models = { list: async () => [{ connectionId: 'local', model: 'test-model' }] };
+  return { creates: () => creates };
+}
+
+test('native registration upserts only named commands and 204 callbacks succeed without bot auth', async () => {
+  const calls = [];
+  const api = createDiscordApi({ token: 'bot-secret', fetchImpl: async (url, init) => {
+    calls.push({ url, init });
+    if (init.method === 'GET') return response([{ id: '111', name: 'help', type: 1 }, { id: '222', name: 'unrelated', type: 1 }]);
+    return { ok: true, status: 204 };
+  } });
+  await api.registerCommands(BOT.id);
+  assert.equal(calls.length, 6); assert.equal(calls[1].init.method, 'PATCH');
+  assert.ok(calls.every(call => !call.url.endsWith('/222') && call.init.method !== 'PUT' && call.init.method !== 'DELETE'));
+  await api.interactionCallback(interaction(), { type: 5, data: { flags: 64 } });
+  assert.equal(calls.at(-1).init.headers.Authorization, undefined);
+  await api.interactionEdit(interaction(), '@everyone');
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body).allowed_mentions, { parse: [], replied_user: false });
+});
+
+test('commands acknowledge before serialized work, dedup, scoped auth, invalid actors and ack failure have no effects', async () => {
+  const f = fixture(); await admit(f); const sessions = sessionApi(f), api = interactionApi();
+  let release, entered = false;
+  f.context.agents.turns.submit = async () => { entered = true; return new Promise(resolve => { release = resolve; }); };
+  const long = f.service.processMessage(message('523456789012345680', { content: `<@${BOT.id}> long`, mentions: [BOT] }), BOT);
+  await until(() => entered);
+  const cmd = f.service.processInteraction(interaction(), BOT, api);
+  await until(() => api.callbacks.length === 1);
+  assert.equal(api.edits.length, 0); assert.deepEqual(api.callbacks[0].body, { type: 5, data: { flags: 64 } });
+  release({ turn: { id: 'long' } }); await long; await cmd;
+  await f.service.processInteraction(interaction(), BOT, api); assert.equal(api.callbacks.length, 1);
+  await f.service.processInteraction(interaction('623456789012345680', 'new', { member: { user: USER, permissions: '0' } }), BOT, api);
+  assert.match(api.edits.at(-1), /permission/); assert.equal(sessions.creates(), 0);
+  for (const patch of [{ application_id: OTHER.id }, { member: { user: OTHER, permissions: '32' } }, { guild_id: 'bad' }]) {
+    await f.service.processInteraction(interaction('623456789012345681', 'new', patch), BOT, api);
+  }
+  assert.equal(sessions.creates(), 0);
+  await assert.rejects(f.service.processInteraction(interaction('623456789012345682', 'new'), BOT, { interactionCallback: async () => { throw new Error('ack'); } }), /ack/);
+  assert.equal(sessions.creates(), 0);
+  await f.service.processInteraction(interaction('623456789012345683', 'new', { guild_id: '999' }), BOT, api);
+  assert.match(api.edits.at(-1), /no approved/);
+  await f.service.close();
+});
+
+test('new persists owned binding, preserves old history but filters pre-boundary quotes; model autocomplete and legacy guidance', async () => {
+  let f = fixture(); await admit(f); sessionApi(f); const api = interactionApi();
+  await f.service.processMessage(message('523456789012345679', { content: 'old-room-secret' }), BOT);
+  await f.service.processInteraction(interaction('623456789012345679', 'model'), BOT, api); assert.match(api.edits.at(-1), /\/new/);
+  const command = interaction('623456789012345680', 'new');
+  await Promise.all([f.service.processInteraction(command, BOT, api), f.service.processInteraction(command, BOT, api)]);
+  assert.equal((await f.service.publicState()).mappings[0].sessionId, 'owned-fresh');
+  assert.match(JSON.stringify(f.globalSettings.data.get('discord-room-history')), /old-room-secret/);
+  assert.doesNotMatch(JSON.stringify([...f.settings.data]), /interaction-private/);
+  const settings = f.settings, globalSettings = f.globalSettings; await f.service.close();
+  f = fixture({ settings, globalSettings }); sessionApi(f);
+  await f.service.processMessage(message('723456789012345681', { content: `<@${BOT.id}> fresh`, mentions: [BOT], referenced_message: { id: '523456789012345679', content: 'old-room-secret', author: USER } }), BOT);
+  assert.equal(f.submissions[0].sessionId, 'owned-fresh'); assert.doesNotMatch(f.submissions[0].message, /old-room-secret/);
+  await f.service.processInteraction(interaction('723456789012345682', 'model', { type: 4, data: { name: 'model', options: [{ name: 'selection', focused: true, value: 'test' }] } }), BOT, api);
+  assert.deepEqual(api.callbacks.at(-1).body, { type: 8, data: { choices: [{ name: 'local:test-model', value: 'local:test-model' }] } });
+  await f.service.processInteraction(interaction('723456789012345683', 'model', { data: { name: 'model', options: [{ name: 'selection', value: 'local:test-model' }] } }), BOT, api);
+  assert.match(api.edits.at(-1), /Model set/);
+  await f.service.processInteraction(interaction('723456789012345684', 'model'), BOT, api); assert.match(api.edits.at(-1), /local:test-model/);
+  await f.service.close();
+});
+
+test('stop cancels only owned channel session pending deliveries, including ambiguous admission resolution', async () => {
+  const f = fixture(); await admit(f); const api = interactionApi(), canceled = [];
+  await f.service.processMessage(message('523456789012345679', { content: `<@${BOT.id}> pending`, mentions: [BOT] }), BOT);
+  const items = await f.settings.get('deliveries');
+  await f.settings.set('deliveries', [...items, { ...items[0], id: 'foreign', turnId: 'foreign', submission: { ...items[0].submission, sessionId: 'other' } }]);
+  f.context.agents.turns.cancel = async id => { canceled.push(id); return { turn: { id, status: 'running' }, cancellationRequested: true }; };
+  await f.service.processInteraction(interaction('623456789012345680', 'stop'), BOT, api);
+  assert.deepEqual(canceled, ['turn-1']); assert.match(api.edits.at(-1), /Cancellation requested for 1/);
+  assert.equal((await f.settings.get('deliveries')).find(item => item.id === 'foreign').status, 'processing');
+  await f.service.close();
+});
+
+test('stop resolves ambiguous admission with the frozen key and reports unresolved submissions honestly', async () => {
+  const f = fixture(); await admit(f); const api = interactionApi(), canceled = [];
+  f.context.agents.turns.submit = async () => { throw new Error('ambiguous'); };
+  await f.service.processMessage(message('523456789012345680', { content: `<@${BOT.id}> wait`, mentions: [BOT] }), BOT);
+  const original = (await f.settings.get('deliveries'))[0].submission;
+  f.context.agents.turns.cancel = async id => { canceled.push(id); return { cancellationRequested: true, turn: { status: 'running' } }; };
+  await f.service.processInteraction(interaction('623456789012345680', 'stop'), BOT, api);
+  assert.match(api.edits.at(-1), /1 submission\(s\) could not be resolved/);
+  assert.deepEqual(canceled, []);
+  f.context.agents.turns.submit = async input => { assert.deepEqual(input, original); return { turn: { id: 'accepted-original' } }; };
+  await f.service.processInteraction(interaction('623456789012345681', 'stop'), BOT, api);
+  assert.deepEqual(canceled, ['accepted-original']);
+  assert.match(api.edits.at(-1), /Cancellation requested for 1/);
+  assert.equal((await f.settings.get('deliveries'))[0].status, 'interrupted');
+  await f.service.close();
+});
+
+test('DM participant can create a session; status reports Core state and reset suppresses late old replies', async () => {
+  const f = fixture({ fetchImpl: async () => response({ id: CHANNEL, type: 1 }) }); await admit(f, message('523456789012345678', { guild_id: undefined })); sessionApi(f);
+  const api = interactionApi();
+  await f.service.processMessage(message('523456789012345679', { guild_id: undefined, content: 'pending' }), BOT);
+  await f.service.processInteraction(interaction('623456789012345678', 'status', { guild_id: undefined, member: undefined, user: USER }), BOT, api);
+  assert.match(api.edits.at(-1), /Turn states: queued/);
+  await f.service.processInteraction(interaction('623456789012345679', 'new', { guild_id: undefined, member: undefined, user: USER }), BOT, api);
+  assert.equal((await f.service.publicState()).mappings[0].sessionId, 'owned-fresh');
+  f.setTurn({ status: 'succeeded', result: { answerText: 'old answer' } });
+  await f.service.reconcile(f.api);
+  assert.equal(f.sent.length, 0);
+  await f.service.close();
+});
+
+ test('new session context strips nested replies quoting pre-reset history', async () => {
+  const settings = store(), history = createDiscordRoomHistory({ settings });
+  const mapping = { guildId: GUILD, channelId: CHANNEL, historyAfter: '623456789012345678' };
+  await history.record(mapping, message('723456789012345679', { content: 'fresh text', referenced_message: { id: '523456789012345679', content: 'pre-reset secret', author: USER } }), 'one');
+  const context = await history.context(mapping, '823456789012345679', 'one');
+  assert.equal(context.length, 1); assert.equal(context[0].text, 'fresh text');
+  assert.doesNotMatch(JSON.stringify(context), /pre-reset secret/);
+  assert.match(JSON.stringify([...settings.data]), /pre-reset secret/);
+});

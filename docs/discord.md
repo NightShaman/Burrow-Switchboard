@@ -6,7 +6,7 @@ Install and enable Switchboard, use an enabled limited-capability Burrow agent, 
 
 Generate a bot invite for the intended server with **View Channels**, **Send Messages**, **Read Message History**, and **Send Messages in Threads**. Do not grant Administrator merely for Switchboard. Allow each bot to see/read and post in the specific channel and thread you intend to use. For a **private thread**, explicitly add/invite each bot as a thread member: parent-channel permissions alone do not imply thread membership. Server/channel permission overwrites still apply. Switchboard does not set Discord intents or permissions for you.
 
-Switchboard connects outward to Discord's Gateway (WebSocket) and REST API; it does **not** register an inbound interaction/webhook URL or require an inbound reverse proxy. It handles text messages, not slash commands, attachments, voice or streaming.
+Switchboard connects outward to Discord's Gateway (WebSocket) and REST API; it does **not** register an inbound interaction/webhook URL or require an inbound reverse proxy. It handles text messages and native slash commands, not attachments, voice or streaming.
 
 ## First DM or channel
 
@@ -25,3 +25,39 @@ Each bot must be admitted separately for **each DM, channel and thread**. A thre
 5. Create a public thread in that channel; send human text inside it and approve the **thread route separately for each bot**. Invite **both** into a private thread before attempting its admissions. In each thread ask A to speak, then ask B about A's answer. Check that thread messages remain separate from parent-channel and other thread context. A DM admission and history are also isolated per bot.
 
 If nothing appears, confirm bot identity and gateway health, the Message Content intent, channel visibility/history and thread membership, then the exact bot's pending admission/mapping. Replies/mentions in approved channels and threads must come from a human; bot/webhook messages are recorded as context only. Credentials remain write-only; clearing a token stops that connection but retains its bot binding and routes. Rotation is only for the **same bot**; use a new connection for a different bot. See [routing](routing.md), [operations](operations.md) and [API](api.md).
+
+## Native slash commands
+
+Switchboard registers `/help`, `/status`, `/stop`, `/new`, and `/model` with Discord
+when its bot connects. Registration uses individual command upserts, not bulk
+replacement: unrelated application commands are retained. Same-name chat-input
+commands belong to Switchboard. Install the bot with the `applications.commands`
+scope as well as `bot`; global commands may take time to propagate. If registration
+fails, messaging stays available and registration is retried on reconnect.
+
+Commands only operate in an approved, enabled channel/thread/DM mapping. `/help`
+and `/status` are channel-scoped. `/stop`, `/new`, and model changes require a human
+DM participant, or **Manage Server** / **Administrator** in guilds. Bots are ignored.
+Replies are ephemeral and mentions are suppressed. Commands never generate LLM prompts.
+
+- `/stop` cancels pending deliveries belonging to this mapped agent and current
+  session only. An ambiguous admission is resolved with its durable idempotency key
+  before cancellation; other sessions are not canceled.
+- `/new` creates an owner-bound Core session and durably updates this channel's
+  session binding. Prior sessions/history remain, but old replies are suppressed and
+  pre-reset room history/quotes are not injected into the fresh session. Interaction
+  IDs are Core creation idempotency keys.
+- `/model` shows the selection; `/model selection:` offers safe inventory autocomplete
+  and changes the current owner-bound session. Legacy deterministic Discord sessions
+  must use `/new` first. Agent reassignment clears the old owned session binding.
+
+**Release compatibility:** deploy Core's external agent cancellation, owner-bound
+session creation/model read/model write, and safe `context.models.list()` APIs
+**before deploying this Switchboard release**. Older Core retains ordinary messaging,
+while unsupported commands explain the upgrade requirement. Interaction tokens are
+transient REST credentials: never stored in settings, delivery records, or public state.
+Initial deferrals are sent outside the serialized message queue; failed acknowledgments
+perform no command side effects. Completed interaction IDs are durably deduplicated
+within a bounded recent ledger (200 records); in-memory acknowledgments are bounded
+at 500 IDs. A process failure after deferral can leave the ephemeral reply unfinished;
+`/new` retries use Core idempotency, not a second fresh session.
